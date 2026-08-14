@@ -40,7 +40,8 @@ export function apply(ctx: ClientContext): void {
 
   const injected = (): FileTreeInjected & FileTreeHookSources => ({
     listDir: (path, signal) => ctx.workspaces.listDir(path, signal),
-    openPath: (path) => ctx.workspaces.openPath(path),
+    searchEntries: (root, query, signal) => ctx.workspaces.searchEntries(root, query, signal),
+    openPath: path => ctx.workspaces.openPath(path),
     copyPath: (path) => {
       void navigator.clipboard.writeText(path).catch(() => {
         // Clipboard unavailable (insecure context); the row still shows the path.
@@ -56,7 +57,7 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(() => {
     const offChange = ctx.remote.$on('filetree/change', () => {
-      changeSignal.update(d => { d.revision += 1 })
+      changeSignal.update((d) => { d.revision += 1 })
     })
     const offSlot = ctx.slots.inject('sidebar.filetree', () => ctx.slots.register({
       name: 'sidebar.filetree',

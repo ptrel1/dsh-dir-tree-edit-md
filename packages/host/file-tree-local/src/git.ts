@@ -44,8 +44,11 @@ export function parseGitStatus(output: string): ReadonlyMap<string, FileTreeGitS
   const statuses = new Map<string, FileTreeGitStatus>()
   const fields = output.split('\0')
   for (let i = 0; i < fields.length; i++) {
-    const field = fields[i]!
-    if (field.length < 3 || field[2] !== ' ' || !isCode(field[0]!, field[1]!)) continue
+    const field = fields[i]
+    if (field === undefined) continue
+    const x = field[0]
+    const y = field[1]
+    if (field.length < 3 || field[2] !== ' ' || x === undefined || y === undefined || !isCode(x, y)) continue
     const code = field.slice(0, 2)
     const status = statusForCode(code)
     if (status === undefined) continue

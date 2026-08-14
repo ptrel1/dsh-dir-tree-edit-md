@@ -124,7 +124,8 @@ export function globToRegExp(glob: string): RegExp {
   const segments = glob.split('/')
   const parts: string[] = []
   for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i]!
+    const segment = segments[i]
+    if (segment === undefined) continue
     if (segment === '**') {
       // Zero or more whole segments. Each position owns its own separators:
       // leading, each matched segment carries its trailing slash; mid, the
@@ -149,4 +150,22 @@ export function globToRegExp(glob: string): RegExp {
 export function messageOf(error: unknown): string {
   /* v8 ignore next -- node:fs rejects with Error instances; the String arm only satisfies the unknown narrowing. */
   return error instanceof Error ? error.message : String(error)
+}
+
+/** Case-insensitive substring match of one entry name against a pre-lowered query. */
+export function nameMatches(name: string, needle: string): boolean {
+  return name.toLowerCase().includes(needle)
+}
+
+/**
+ * True when a path matches any compiled ignore matcher. Backslash-form
+ * Windows paths are normalized first, mirroring how the glob regexes are
+ * written against slash separators.
+ * @param path - candidate path (absolute or repo-relative).
+ * @param matchers - compiled matchers from {@link globToRegExp}.
+ * @returns whether the path should be skipped.
+ */
+export function pathIgnored(path: string, matchers: readonly RegExp[]): boolean {
+  const normalized = path.replace(/\\/g, '/')
+  return matchers.some(matcher => matcher.test(normalized))
 }

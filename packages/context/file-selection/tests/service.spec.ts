@@ -67,7 +67,7 @@ describe('FileSelection', () => {
     expect(text).toContain('- /proj/b.txt')
 
     // A missing agent (bare assembly) renders empty.
-    expect(render({} as AssembleContext)).toBe('')
+    expect(render({})).toBe('')
 
     await fiber.dispose()
   })

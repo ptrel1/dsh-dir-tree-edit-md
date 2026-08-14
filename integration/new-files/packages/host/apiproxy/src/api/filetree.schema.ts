@@ -28,6 +28,19 @@ export const fileTreeListValueSchema = z.object({
   truncated: z.boolean(),
 }) satisfies z.ZodType<Wire<ResponseValue<'filetree.list'>>>
 
+/** filetree.search request payload: the search root and the name substring. */
+export const fileTreeSearchRequestSchema = z.object({
+  path: z.string().min(1),
+  query: z.string().min(1),
+}) satisfies z.ZodType<Wire<RequestPayload<'filetree.search'>>>
+
+/** filetree.search response value. */
+export const fileTreeSearchValueSchema = z.object({
+  path: z.string(),
+  matches: z.array(fileTreeEntrySchema),
+  truncated: z.boolean(),
+}) satisfies z.ZodType<Wire<ResponseValue<'filetree.search'>>>
+
 /** filetree.select request payload: the session and its complete selected-path set. */
 export const fileTreeSelectRequestSchema = z.object({
   sessionId: z.string(),

@@ -40,6 +40,16 @@ export interface FileTreeListing {
   truncated: boolean
 }
 
+/** One file-name search result below a root: flat matched entries (no ancestor rows). */
+export interface FileTreeSearchResult {
+  /** Absolute search root. */
+  path: string
+  /** Matched files and directories, in walk order; ancestors of matches are NOT included. */
+  matches: FileTreeEntry[]
+  /** True when the backend cut `matches` at its complete-result bound or deadline. */
+  truncated: boolean
+}
+
 /** Closed failure vocabulary of the listing primitive (mirrored onto the wire by consumers). */
 export type FileTreeErrorCode = 'tree-unreadable'
 

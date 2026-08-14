@@ -1,7 +1,9 @@
 /** Listing helper behavior: path fencing, the bounded window, and abort-racing. */
 
 import { describe, expect, it } from 'vitest'
-import { asError, boundedInsert, fullyQualified, globToRegExp, messageOf, raceAbort } from '../src/listing.ts'
+import {
+  asError, boundedInsert, fullyQualified, globToRegExp, messageOf, nameMatches, pathIgnored, raceAbort,
+} from '../src/listing.ts'
 import type { ListingCandidate } from '../src/listing.ts'
 
 function candidate(name: string): ListingCandidate {
@@ -134,5 +136,38 @@ describe('asError / messageOf', () => {
     expect(asError('text')).toBeInstanceOf(Error)
     expect(messageOf(error)).toBe('boom')
     expect(messageOf('text')).toBe('text')
+  })
+})
+
+describe('nameMatches', () => {
+  it('matches case-insensitive substrings against a pre-lowered needle', () => {
+    expect(nameMatches('store.ts', 'store')).toBe(true)
+    expect(nameMatches('Store.ts', 'store')).toBe(true)
+    expect(nameMatches('redstore.ts', 'store')).toBe(true)
+    expect(nameMatches('index.ts', 'store')).toBe(false)
+    expect(nameMatches('s', '')).toBe(true)
+  })
+})
+
+describe('pathIgnored', () => {
+  const matchers = [globToRegExp('**/node_modules/**'), globToRegExp('**/.git/**'), globToRegExp('**/.pnpm-store/**')]
+
+  it('blocks an ignored directory at any depth, itself included', () => {
+    expect(pathIgnored('node_modules', matchers)).toBe(true)
+    expect(pathIgnored('node_modules/dep/a.js', matchers)).toBe(true)
+    expect(pathIgnored('packages/x/node_modules/a.js', matchers)).toBe(true)
+    expect(pathIgnored('.git/config', matchers)).toBe(true)
+    expect(pathIgnored('packages/.pnpm-store/v3', matchers)).toBe(true)
+  })
+
+  it('normalizes backslash-form Windows paths', () => {
+    expect(pathIgnored('packages\\x\\node_modules\\a.js', matchers)).toBe(true)
+    expect(pathIgnored('packages\\x\\src\\a.ts', matchers)).toBe(false)
+  })
+
+  it('passes unrelated paths', () => {
+    expect(pathIgnored('src/index.ts', matchers)).toBe(false)
+    expect(pathIgnored('packages/node_modules_backup/a.ts', matchers)).toBe(false)
+    expect(pathIgnored('', matchers)).toBe(false)
   })
 })

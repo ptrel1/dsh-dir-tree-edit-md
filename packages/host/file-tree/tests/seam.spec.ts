@@ -3,12 +3,16 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { FileTree, FileTreeError } from '../src/index.ts'
-import type { FileTreeListing } from '../src/index.ts'
+import type { FileTreeListing, FileTreeSearchResult } from '../src/index.ts'
 
-/** Minimal concrete backend: all a subclass owes the abstract class is listDir(). */
+/** Minimal concrete backend: all a subclass owes the abstract class is listDir() and search(). */
 class StubFileTree extends FileTree {
   async listDir(): Promise<FileTreeListing> {
     return { path: '/x', entries: [], truncated: false }
+  }
+
+  async search(): Promise<FileTreeSearchResult> {
+    return { path: '/x', matches: [], truncated: false }
   }
 }
 

@@ -12,7 +12,7 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { FileTreeErrorCode, FileTreeListing } from './types.ts'
+import type { FileTreeErrorCode, FileTreeListing, FileTreeSearchResult } from './types.ts'
 
 export type {
   FileTreeEntry,
@@ -20,6 +20,7 @@ export type {
   FileTreeErrorCode,
   FileTreeGitStatus,
   FileTreeListing,
+  FileTreeSearchResult,
 } from './types.ts'
 
 /** Typed failure thrown by the listing primitive so consumers can map business codes without string matching. */
@@ -60,6 +61,16 @@ export abstract class FileTree extends Service {
    * @throws {FileTreeError} `tree-unreadable` when the path is not fully qualified or cannot be listed.
    */
   abstract listDir(path: string, signal?: AbortSignal): Promise<FileTreeListing>
+
+  /**
+   * Search file and directory names under a root (case-insensitive substring).
+   * @param root - absolute directory to search (a session's workspace root).
+   * @param query - trimmed non-empty substring matched against entry names.
+   * @param signal - caller lifetime; abort stops the scan and rejects with the abort reason.
+   * @returns flat matched entries (no ancestor rows); backends bound the scan and report `truncated`.
+   * @throws {FileTreeError} `tree-unreadable` when the root is not fully qualified or cannot be searched.
+   */
+  abstract search(root: string, query: string, signal?: AbortSignal): Promise<FileTreeSearchResult>
 }
 
 export default FileTree

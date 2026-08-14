@@ -2,7 +2,8 @@
 
 A **file-tree sidebar plugin** for the DeepSeek Harness (dsh) web GUI: browse a
 workspace's real files in a lazy-expanding tree, see git status on every row,
-and multi-select files for the model to know about.
+search by file name with the tree filtered in place, and multi-select files
+for the model to know about.
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -22,6 +23,12 @@ and multi-select files for the model to know about.
 - **Live refresh without polling** — a Chokidar watcher emits `filetree/change`,
   which is forwarded to clients through dsh's remote-event allowlist; the
   client aborts superseded requests and re-lists its expanded view.
+- **In-tree file search** — a search box above the tree filters by name
+  (case-insensitive substring, files and directories) while the tree shape is
+  preserved: matches appear behind a synthesized ancestor chain, auto-expanded,
+  and matched rows keep their git ink (synthesized ancestors don't). Clearing
+  the query restores the plain tree; clicking a matched directory clears the
+  filter and reveals that directory in the plain tree.
 - **Hardened for big repos** (measured on a real monorepo):
   - git-status scans are single-flighted per repo root and deadline-bounded
     (`gitStatusTimeoutMs`, default 8 s); on expiry the listing settles without
@@ -43,7 +50,7 @@ packages/
 │   ├── file-tree/          # Service Definition: ctx.fileTree, listDir, types
 │   └── file-tree-local/    # backend: listing, git status, Chokidar watcher
 ├── client/
-│   └── ui-file-tree/       # browser tree UI: expansion, git ink, multi-select
+│   └── ui-file-tree/       # browser tree UI: expansion, git ink, name search, multi-select
 └── context/
     └── file-selection/     # selection → durable session event → model context
 integration/
@@ -56,8 +63,8 @@ docs/
 
 The plugin packages use pnpm `workspace:^` dependencies and are meant to live
 **inside a dsh checkout**. `integration/` carries the dsh-core wiring the
-plugin needs (apiproxy `filetree.list`/`filetree.select` RPCs, the
-`sidebar.filetree` slot and Workspace/Files switch, the forwarded
+plugin needs (apiproxy `filetree.list`/`filetree.select`/`filetree.search`
+RPCs, the `sidebar.filetree` slot and Workspace/Files switch, the forwarded
 `filetree/change` event, and the web-app mount rows).
 
 ## Install into a dsh checkout
@@ -111,6 +118,8 @@ config schema:
 | `watchPollIntervalMs` | `500` | polling interval when `usePolling` is true |
 | `watchIgnored` | `['**/node_modules/**', '**/.git/**', '**/.pnpm-store/**']` | globs the watcher skips (`*` within a segment, `**` across segments) |
 | `watchDepth` | `undefined` | max directory depth to arm watchers on; undefined = all |
+| `searchMaxMatches` | `200` | match bound of one search; overflow sets `truncated` |
+| `searchTimeoutMs` | `10000` | deadline per search; expiry settles with the matches collected (`truncated`) |
 
 ## Design rulings (summary)
 
@@ -125,6 +134,14 @@ config schema:
   rebuilds the same context.
 - Directory git color is **aggregated**: highest rank of
   `modified > added > deleted > untracked > ignored` among descendants.
+- Search is **name-only and filtered in-tree**: case-insensitive substring
+  over file and directory names; the client rebuilds the tree shape from the
+  host's flat match list, synthesizing the ancestor directories (no git ink —
+  they were never listed). The host self-limits matches and time
+  (`searchMaxMatches`/`searchTimeoutMs`) because the client's 30 s unary
+  timeout is not the right backstop for a deep walk; the synthesized chain is
+  expanded by construction, and clicking a directory row clears the filter and
+  reveals it in the plain tree.
 
 ## Testing
 

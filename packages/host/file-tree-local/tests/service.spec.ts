@@ -1,6 +1,6 @@
 /** Behavior of the local file-tree backend over real temporary directory trees. */
 
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -22,6 +22,8 @@ function config(overrides: Partial<Config> = {}): Config {
     watchPollIntervalMs: 500,
     watchIgnored: ['**/node_modules/**', '**/.git/**', '**/.pnpm-store/**'],
     watchDepth: undefined,
+    searchMaxMatches: 200,
+    searchTimeoutMs: 10_000,
     ...overrides,
   }
 }
@@ -63,6 +65,10 @@ beforeAll(async () => {
   await writeFile(join(root, 'a.txt'), 'a')
   await writeFile(join(root, '.hidden.txt'), 'h')
   await writeFile(join(root, 'dir', 'b.txt'), 'b')
+  await mkdir(join(root, 'dir', 'sub'))
+  await writeFile(join(root, 'dir', 'sub', 'c.txt'), 'c')
+  await mkdir(join(root, 'node_modules'))
+  await writeFile(join(root, 'node_modules', 'dep.txt'), 'd')
   await symlink(join(root, 'dir'), join(root, 'linked'), 'junction')
   await symlink(join(root, 'gone'), join(root, 'broken'), 'junction')
   try {
@@ -195,7 +201,7 @@ describe('LocalFileTree', () => {
     let settle: ((outcome: { exitCode: number; signal: null }) => void) | undefined
     gitBehavior = () => {
       spawns += 1
-      return { ...gitHandle(''), done: new Promise(resolve => { settle = resolve }) }
+      return { ...gitHandle(''), done: new Promise((resolve) => { settle = resolve }) }
     }
     const first = tree.listDir(root)
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -266,5 +272,151 @@ describe('LocalFileTree', () => {
       await fiber.dispose()
       await rm(watchRoot, { recursive: true, force: true })
     }
+  })
+
+  describe('search', () => {
+    it('matches file and directory names case-insensitively by substring, nested included', async () => {
+      const result = await tree.search(root, 'B.TXT')
+      expect(result.matches.map(entry => entry.name)).toEqual(['b.txt'])
+
+      const dirs = await tree.search(root, 'DIR')
+      expect(dirs.matches.map(entry => entry.name)).toEqual(['dir'])
+
+      // Every text file at any depth matches; the walked subtree is not name-sorted.
+      const txt = await tree.search(root, 'txt')
+      expect(txt.matches.map(entry => entry.name).sort()).toEqual(['.hidden.txt', 'a.txt', 'b.txt', 'c.txt'])
+      expect(txt.matches.find(entry => entry.name === '.hidden.txt')!.hidden).toBe(true)
+      expect(txt.truncated).toBe(false)
+    })
+
+    it('attaches per-row git status to matches', async () => {
+      const files = await tree.search(root, 'b.txt')
+      const b = files.matches.find(entry => entry.name === 'b.txt')!
+      expect(b.gitStatus).toBe('modified')
+
+      const dirs = await tree.search(root, 'dir')
+      const dir = dirs.matches.find(entry => entry.name === 'dir')!
+      expect(dir.kind).toBe('directory')
+      expect(dir.gitStatus).toBe('modified')
+
+      const deep = await tree.search(root, 'c.txt')
+      expect(deep.matches[0]!.gitStatus).toBeUndefined()
+    })
+
+    it('skips ignored subtrees entirely', async () => {
+      const result = await tree.search(root, 'dep')
+      expect(result.matches).toHaveLength(0)
+    })
+
+    it('never follows symlinked directories', async () => {
+      const result = await tree.search(root, 'b.txt')
+      expect(result.matches.map(entry => entry.path)).toEqual([join(root, 'dir', 'b.txt')])
+
+      const linked = await tree.search(root, 'linked')
+      expect(linked.matches.map(entry => entry.name)).toEqual(['linked'])
+      expect(linked.matches[0]!.kind).toBe('directory')
+
+      const broken = await tree.search(root, 'broken')
+      expect(broken.matches).toHaveLength(0)
+    })
+
+    it('cuts matches at searchMaxMatches and flags the cut', async () => {
+      const bounded = new Context()
+      bounded.provide('subprocess', { spawn: () => gitHandle('') })
+      const fiber = bounded.plugin(LocalFileTree, config({ searchMaxMatches: 2 }))
+      await fiber.await()
+      try {
+        const result = await bounded.get('fileTree')!.search(root, 'txt')
+        expect(result.matches).toHaveLength(2)
+        expect(result.truncated).toBe(true)
+      } finally {
+        await fiber.dispose()
+      }
+    })
+
+    it('settles with truncated when the search deadline expires mid-git', async () => {
+      const slow = new Context()
+      slow.provide('subprocess', {
+        spawn: (spec: SubprocessSpawnSpec) => ({
+          ...gitHandle(''),
+          done: new Promise<never>((_, reject) => {
+            // Emulate the real subprocess contract: the spawn signal kills the
+            // child, settling the handle the moment the search deadline aborts.
+            spec.signal?.addEventListener('abort', () => { reject(new Error('spawn aborted')) }, { once: true })
+          }),
+        }),
+      })
+      const fiber = slow.plugin(LocalFileTree, config({ searchTimeoutMs: 50, gitStatusTimeoutMs: 60_000 }))
+      await fiber.await()
+      try {
+        const result = await slow.get('fileTree')!.search(root, 'txt')
+        expect(result.truncated).toBe(true)
+      } finally {
+        await fiber.dispose()
+      }
+    })
+
+    it('stops the scan with the caller: an aborted signal rejects with its own reason', async () => {
+      const gone = new AbortController()
+      gone.abort(new Error('caller left'))
+      await expect(tree.search(root, 'txt', gone.signal)).rejects.toThrow('caller left')
+    })
+
+    it('returns no matches for an empty query', async () => {
+      const result = await tree.search(root, '   ')
+      expect(result.matches).toHaveLength(0)
+      expect(result.truncated).toBe(false)
+    })
+
+    it('rejects a non-qualified path and an unreadable root', async () => {
+      await expect(tree.search('relative/path', 'x')).rejects.toThrow('not a fully qualified path')
+      const failure = await tree.search(join(root, 'no-such-dir'), 'x').catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(FileTreeError)
+      expect((failure as FileTreeError).code).toBe('tree-unreadable')
+    })
+
+    it.skipIf(process.platform === 'win32')('skips an unreadable subdirectory mid-walk', async () => {
+      const blocked = await mkdtemp(join(tmpdir(), 'dsh-ft-block-'))
+      await mkdir(join(blocked, 'locked'))
+      await writeFile(join(blocked, 'locked', 'secret.txt'), 's')
+      await writeFile(join(blocked, 'visible.txt'), 'v')
+      await chmod(join(blocked, 'locked'), 0o000)
+      const isolated = new Context()
+      isolated.provide('subprocess', { spawn: () => gitHandle('') })
+      const fiber = isolated.plugin(LocalFileTree)
+      await fiber.await()
+      try {
+        const result = await isolated.get('fileTree')!.search(blocked, 'txt')
+        expect(result.matches.map(entry => entry.name)).toEqual(['visible.txt'])
+      } finally {
+        await chmod(join(blocked, 'locked'), 0o755)
+        await fiber.dispose()
+        await rm(blocked, { recursive: true, force: true })
+      }
+    })
+
+    it('arms a watcher for a search-only root', async () => {
+      const searchRoot = await mkdtemp(join(tmpdir(), 'dsh-ft-swatch-'))
+      const watchCtx = new Context()
+      watchCtx.provide('subprocess', { spawn: () => gitHandle('') })
+      const fiber = watchCtx.plugin(LocalFileTree)
+      await fiber.await()
+      const events: Array<{ root: string; paths: readonly string[] }> = []
+      const off = watchCtx.on('filetree/change', (watchedRoot, paths) => { events.push({ root: watchedRoot, paths }) })
+      try {
+        await watchCtx.get('fileTree')!.search(searchRoot, 'nomatch')
+        await writeFile(join(searchRoot, 'new.txt'), 'n')
+        const deadline = Date.now() + 5000
+        while (events.length === 0 && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+        expect(events.length).toBeGreaterThan(0)
+        expect(events[0]!.root).toBe(searchRoot)
+      } finally {
+        off()
+        await fiber.dispose()
+        await rm(searchRoot, { recursive: true, force: true })
+      }
+    })
   })
 })

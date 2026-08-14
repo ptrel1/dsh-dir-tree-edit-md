@@ -32,11 +32,12 @@ describe('ui-file-tree apply', () => {
 
     ctx.provide('workspaces', {
       listDir: vi.fn(async () => ({ path: '/x', entries: [], truncated: false })),
+      searchEntries: vi.fn(async () => ({ path: '/x', matches: [], truncated: false })),
       openPath: vi.fn(async () => {}),
       selectFiles: vi.fn(async () => {}),
     })
 
-    apply(ctx as never)
+    apply(ctx)
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(dictionaries).toHaveLength(1)

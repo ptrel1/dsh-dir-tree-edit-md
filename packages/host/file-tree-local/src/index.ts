@@ -14,10 +14,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import chokidar from 'chokidar'
 import z from '@deepseek-ai/schemastery'
 import { FileTree, FileTreeError } from '@deepseek-ai/dsh-host-file-tree'
-import type { FileTreeEntry, FileTreeListing, FileTreeGitStatus } from '@deepseek-ai/dsh-host-file-tree'
+import type { FileTreeEntry, FileTreeListing, FileTreeGitStatus, FileTreeSearchResult } from '@deepseek-ai/dsh-host-file-tree'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { aggregateDirStatus, findGitRoot, parseGitStatus } from './git.ts'
-import { asError, boundedInsert, fullyQualified, globToRegExp, messageOf, raceAbort } from './listing.ts'
+import {
+  asError, boundedInsert, fullyQualified, globToRegExp, messageOf, nameMatches, pathIgnored, raceAbort,
+} from './listing.ts'
 import type { ListingCandidate } from './listing.ts'
 
 /** Normalize a path to forward-slash separators, matching git's status output. */
@@ -67,6 +69,10 @@ export interface Config {
    * undefined (default) arms every level.
    */
   watchDepth: number | undefined
+  /** Complete-result bound of one name search. */
+  searchMaxMatches: number
+  /** Deadline for one name search; on expiry the search settles with the matches collected so far. */
+  searchTimeoutMs: number
 }
 
 /**
@@ -86,6 +92,8 @@ export default class LocalFileTree extends FileTree {
     watchPollIntervalMs: z.natural().min(1).default(500),
     watchIgnored: z.array(z.string()).default(['**/node_modules/**', '**/.git/**', '**/.pnpm-store/**']),
     watchDepth: z.union([z.number().step(1).min(1), z.const(undefined)]),
+    searchMaxMatches: z.natural().min(1).default(200),
+    searchTimeoutMs: z.natural().min(1).default(10_000),
   })
 
   /** Live watchers by absolute root; closed and dropped on plugin disposal. */
@@ -103,8 +111,7 @@ export default class LocalFileTree extends FileTree {
 
   /** True when the watcher should skip `path` (backslash-form Windows paths included). */
   private isIgnored(path: string): boolean {
-    const normalized = path.replace(/\\/g, '/')
-    return this.ignoreMatchers.some(matcher => matcher.test(normalized))
+    return pathIgnored(path, this.ignoreMatchers)
   }
 
   constructor(ctx: Context, private readonly config: Config) {
@@ -144,6 +151,125 @@ export default class LocalFileTree extends FileTree {
       entries.push(row)
     }
     return { path: target, entries, truncated }
+  }
+
+  /**
+   * Search file and directory names under a root (case-insensitive substring).
+   * @param root - absolute directory to search (a session's workspace root).
+   * @param query - trimmed non-empty substring matched against entry names.
+   * @param signal - caller lifetime; abort stops the scan and rejects with the abort reason.
+   * @returns flat matched entries with per-row git status; `truncated` reports a cap or deadline cut.
+   * @throws {FileTreeError} `tree-unreadable` when the root is not fully qualified or cannot be searched.
+   */
+  async search(root: string, query: string, signal?: AbortSignal): Promise<FileTreeSearchResult> {
+    if (!fullyQualified(root)) {
+      throw new FileTreeError('tree-unreadable', root, `cannot search "${root}": not a fully qualified path`)
+    }
+    const target = resolve(root)
+    const needle = query.trim().toLowerCase()
+    if (needle === '') return { path: target, matches: [], truncated: false }
+    this.watchRoot(target)
+    // Self-imposed deadline: the wire carrier's 30 s unary timeout is a
+    // backstop, not a UX; on expiry the search settles with what it collected
+    // rather than stalling (same doctrine as the git-status deadline).
+    const deadline = new AbortController()
+    const timer = setTimeout(() => { deadline.abort() }, this.config.searchTimeoutMs)
+    const lifetime = signal === undefined ? deadline.signal : AbortSignal.any([signal, deadline.signal])
+    const matches: FileTreeEntry[] = []
+    let truncated = false
+    try {
+      // One git scan per settled search; the shared `lifetime` also bounds the
+      // git wait (runGitStatus degrades to no coloring on abort instead of rejecting).
+      const gitStatus = await this.readGitStatus(target, lifetime)
+      await this.searchLevel(target, '', needle, gitStatus, lifetime, (entry) => {
+        if (matches.length === this.config.searchMaxMatches) {
+          truncated = true
+          return false
+        }
+        matches.push(entry)
+        return true
+      })
+    } catch (error: unknown) {
+      signal?.throwIfAborted()
+      if (deadline.signal.aborted) truncated = true
+      else throw new FileTreeError('tree-unreadable', target, `cannot search ${target}: ${messageOf(error)}`)
+    } finally {
+      clearTimeout(timer)
+    }
+    return { path: target, matches, truncated }
+  }
+
+  /**
+   * Walk one directory of the search recursion, emitting matches. Returns
+   * false once `onMatch` declines (the whole walk stops immediately — every
+   * caller checks the nested result), true to keep walking siblings.
+   * Unreadable subdirectories mid-walk are skipped silently (best-effort
+   * search); only the root level's failure propagates, and an abort always
+   * propagates so the caller sees it.
+   */
+  private async searchLevel(
+    dir: string,
+    relPrefix: string,
+    needle: string,
+    gitStatus: {
+      root: string | undefined
+      byRelPath: ReadonlyMap<string, FileTreeGitStatus>
+      byDirPath: ReadonlyMap<string, FileTreeGitStatus>
+    },
+    signal: AbortSignal,
+    onMatch: (entry: FileTreeEntry) => boolean,
+  ): Promise<boolean> {
+    let level: Awaited<ReturnType<typeof opendir>>
+    try {
+      const opening = opendir(dir)
+      level = await raceAbort(opening, signal).catch((error: unknown) => {
+        void opening.then(d => d.close().catch(swallowCloseFailure), () => {
+          // Already rejected: raceAbort surfaced or swallowed it.
+        })
+        throw error
+      })
+    } catch (error: unknown) {
+      if (signal.aborted) throw asError(signal.reason)
+      if (relPrefix === '') throw error
+      return true
+    }
+    try {
+      for (;;) {
+        const dirent = await raceAbort(level.read(), signal)
+        if (dirent === null) break
+        const candidate: ListingCandidate = {
+          name: dirent.name,
+          isDirectory: dirent.isDirectory(),
+          isSymbolicLink: dirent.isSymbolicLink(),
+        }
+        const rel = relPrefix === '' ? candidate.name : `${relPrefix}/${candidate.name}`
+        if (this.isIgnored(rel)) continue
+        if (!nameMatches(candidate.name, needle)) {
+          // Descend real directories only; symlinked directories are never
+          // followed (a node_modules junction would loop or blow up the walk).
+          if (candidate.isDirectory && !candidate.isSymbolicLink) {
+            if (!await this.searchLevel(join(dir, candidate.name), rel, needle, gitStatus, signal, onMatch)) return false
+          }
+          continue
+        }
+        const entry = await this.resolveEntry(dir, candidate, gitStatus, signal)
+        if (entry === null) continue
+        if (!onMatch(entry)) return false
+        // A matching directory is both a result and a place to keep looking.
+        if (entry.kind === 'directory' && !candidate.isSymbolicLink) {
+          if (!await this.searchLevel(join(dir, candidate.name), rel, needle, gitStatus, signal, onMatch)) return false
+        }
+      }
+    } finally {
+      const closing = level.close()
+      /* v8 ignore next 3 -- an abort between open and close needs a stalled read; the abandoned-close arm has no observable outcome. */
+      if (signal.aborted) {
+        closing.catch(swallowCloseFailure)
+      } else {
+        await closing
+      }
+    }
+    return true
   }
 
   /** Stream one level into a bounded name-sorted window, plus the eviction flag. */
@@ -259,7 +385,7 @@ export default class LocalFileTree extends FileTree {
     const argv = ['git', '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all']
     if (this.config.gitStatusIncludeIgnored) argv.push('--ignored')
     const deadline = new AbortController()
-    const timer = setTimeout(() => deadline.abort(), this.config.gitStatusTimeoutMs)
+    const timer = setTimeout(() => { deadline.abort() }, this.config.gitStatusTimeoutMs)
     // The deadline terminates the real child through the spawn signal and
     // rejects this await directly; the caller's signal only passes through.
     const lifetime = signal === undefined ? deadline.signal : AbortSignal.any([signal, deadline.signal])

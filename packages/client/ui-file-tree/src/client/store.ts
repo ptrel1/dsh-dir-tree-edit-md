@@ -5,7 +5,19 @@
  * `hooks`-compartment observable, not store state.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
-import type { FileTreeListing } from '@deepseek-ai/dsh-client-runtime/client'
+import type { FileTreeEntry, FileTreeListing } from '@deepseek-ai/dsh-client-runtime/client'
+
+/** Active name search (null = plain browsing). Matches are flat; the view rebuilds the hierarchy. */
+export type FileTreeSearchState = {
+  /** The exact query the matches were produced for (the view compares it to the live box). */
+  query: string
+  /** Flat name matches, in host walk order; ancestors not included. */
+  matches: FileTreeEntry[]
+  /** The host capped the walk; the view renders a truncation notice. */
+  truncated: boolean
+  /** The last run failed; the view renders a retry affordance. */
+  failed: boolean
+}
 
 /** File-tree browsing state (process-local; nothing here is durable). */
 type FileTreeState = {
@@ -17,6 +29,8 @@ type FileTreeState = {
   selection: string[]
   /** Failed levels, keyed by directory path; renders a retry row instead of a stuck spinner. */
   failed: Record<string, boolean>
+  /** Active name search; null while browsing the plain tree. */
+  search: FileTreeSearchState | null
 }
 
 /** Store write set, derived from the actions literal for drift-free typing. */
@@ -25,10 +39,12 @@ type FileTreeActions = {
   setExpanded: (d: FileTreeState, path: string, expanded: boolean) => void
   toggleSelection: (d: FileTreeState, path: string) => void
   setFailed: (d: FileTreeState, path: string, failed: boolean) => void
+  setSearch: (d: FileTreeState, search: FileTreeSearchState) => void
   clearChildren: (d: FileTreeState) => void
   clearExpanded: (d: FileTreeState) => void
   clearSelection: (d: FileTreeState) => void
   clearFailed: (d: FileTreeState) => void
+  clearSearch: (d: FileTreeState) => void
 }
 
 /**
@@ -37,7 +53,7 @@ type FileTreeActions = {
  */
 export function createFileTreeStore(): EngineStoreHandle<FileTreeState, FileTreeActions> {
   return defineStore({
-    init: (): FileTreeState => ({ children: {}, expanded: [], selection: [], failed: {} }),
+    init: (): FileTreeState => ({ children: {}, expanded: [], selection: [], failed: {}, search: null }),
     actions: {
       setChildren: (d, path, listing) => { d.children[path] = listing },
       setExpanded: (d, path, expanded) => {
@@ -51,10 +67,12 @@ export function createFileTreeStore(): EngineStoreHandle<FileTreeState, FileTree
           : [...d.selection, path]
       },
       setFailed: (d, path, failed) => { d.failed[path] = failed },
+      setSearch: (d, search) => { d.search = search },
       clearChildren: (d) => { d.children = {} },
       clearExpanded: (d) => { d.expanded = [] },
       clearSelection: (d) => { d.selection = [] },
       clearFailed: (d) => { d.failed = {} },
+      clearSearch: (d) => { d.search = null },
     },
   })
 }

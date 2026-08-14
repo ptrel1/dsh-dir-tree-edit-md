@@ -1,7 +1,8 @@
 /**
  * filetree domain contract. Wire projection of the host-side file-tree
  * capability (@deepseek-ai/dsh-host-file-tree): one directory level with
- * per-file git status. Method signatures are the source of truth.
+ * per-row git status, plus a recursive name search. Method signatures are
+ * the source of truth.
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -23,7 +24,8 @@ export interface FileTreeEntry {
   kind: FileTreeEntryKind
   /** Hidden by the host platform's convention (dot-prefixed on POSIX); the client owns whether to show it. */
   hidden: boolean
-  /** Git status for a file; absent for directories and paths outside any git work tree. */
+  /** Git status for the row: a file reports its own; a directory aggregates the highest-ranked
+   *  status below it. Absent outside any git work tree. */
   gitStatus?: FileTreeGitStatus
 }
 
@@ -37,10 +39,20 @@ export interface FileTreeListing {
   truncated: boolean
 }
 
+/** One file-name search result below a root: flat matched entries (no ancestor rows). */
+export interface FileTreeSearchResult {
+  /** Absolute search root. */
+  path: string
+  /** Matched files and directories, in walk order. */
+  matches: FileTreeEntry[]
+  /** True when the backend cut `matches` at its complete-result bound or deadline. */
+  truncated: boolean
+}
+
 /** File-tree unary methods. */
 export interface FileTreeApi {
   /**
-   * List one directory level with per-file git status. The caller supplies the
+   * List one directory level with per-row git status. The caller supplies the
    * absolute directory (a session's workspace root). Unreadable or missing
    * targets fail with `tree-unreadable`; the carrier's request signal follows
    * the caller, stopping the backend's scan on disconnect or timeout.
@@ -49,6 +61,17 @@ export interface FileTreeApi {
     request: RpcRequest<{ path: string }>,
     signal: AbortSignal,
   ): Promise<RpcResponse<FileTreeListing>>
+
+  /**
+   * Search file and directory names under a root (case-insensitive substring).
+   * The backend bounds the scan and reports `truncated`; unreadable roots fail
+   * with `tree-unreadable`. The carrier's request signal follows the caller,
+   * stopping the backend's scan on disconnect or timeout.
+   */
+  search(
+    request: RpcRequest<{ path: string; query: string }>,
+    signal: AbortSignal,
+  ): Promise<RpcResponse<FileTreeSearchResult>>
 
   /**
    * Record a session's selected-file set (the file tree's multi-select). The
