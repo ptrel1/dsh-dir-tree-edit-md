@@ -31,8 +31,8 @@ packages/
 └── context/
     └── file-selection/     # 选择 → 持久会话事件 → 模型上下文
 integration/
-├── wiring.patch            # dsh 核心接线改动（RPC、侧边栏槽位、事件转发）
-└── new-files/              # 补丁引入的 dsh 核心新文件
+├── wiring.patch            # 就地修改 39 个 dsh 核心既有文件
+└── new-files/              # 2 个全新的 dsh 核心文件（复制到 dsh 根目录）
 docs/
 ├── screenshot.jpg                              # 本 README 所用的界面截图
 └── 2026-08-14-file-tree-capability-seam.md     # 完整设计记录（中英双语）
@@ -60,7 +60,33 @@ docs/
    cp -r integration/new-files/* .
    ```
 
-   `wiring.patch` 是相对本插件开发时那份 dsh 检出的核心改动快照；在更新的 dsh 上需手动解决冲突。
+   `wiring.patch` **就地修改 39 个 dsh 核心既有文件**，不会创建新文件。按用途分组：
+
+   - `packages/host/apiproxy/*` —— `filetree.list` / `filetree.select` /
+     `filetree.search` 三个 RPC 的处理器、fetch 客户端、rpc-map、schema
+     及其测试
+   - `packages/client/connection/*`、`packages/client/runtime/*`、
+     `packages/api/remotes/*`、`packages/test-support/client-runtime/*` ——
+     工作区契约（`listDir`、`searchEntries`、选中集）、服务实现与测试替身
+   - `packages/client/ui-sidebar/*` —— `sidebar.filetree` 槽位、"工作区/文件"
+     标签切换与本地化文案
+   - `packages/core/session/src/known-event-types.ts` —— 把 `filetree/change`
+     加入事件转发白名单
+   - `packages/bundle/web-app/*` —— 新包的 web-app 挂载行
+   - `tsconfig.base.json` / `tsconfig.client.json` / `tsconfig.host.json` ——
+     workspace 引用与 host-boot 注册
+
+   `integration/new-files/` 放的是 dsh 核心**原本不存在、补丁无法表达**的两个
+   新文件（apiproxy 的 filetree API 面及其 zod schema）。在仓库根目录执行
+   `cp -r integration/new-files/* .` 后，它们落在最终路径：
+
+   ```
+   packages/host/apiproxy/src/api/filetree.ts
+   packages/host/apiproxy/src/api/filetree.schema.ts
+   ```
+
+   `wiring.patch` 是相对本插件开发时那份 dsh 检出的核心改动快照；在更新的
+   dsh 上需手动解决冲突。
 
 3. **安装**（更新 lockfile 并链接新 workspace 包）：
 

@@ -54,8 +54,8 @@ packages/
 └── context/
     └── file-selection/     # selection → durable session event → model context
 integration/
-├── wiring.patch            # dsh core wiring changes (RPCs, sidebar slot, events)
-└── new-files/              # new dsh core files the patch introduces
+├── wiring.patch            # patches 39 existing dsh-core files in place
+└── new-files/              # 2 brand-new dsh-core files (copied to the dsh root)
 docs/
 ├── screenshot.jpg                              # UI screenshot used in this README
 └── 2026-08-14-file-tree-capability-seam.md     # full design record (EN + ZH)
@@ -86,6 +86,34 @@ pnpm.
    ```bash
    git apply integration/wiring.patch
    cp -r integration/new-files/* .
+   ```
+
+   `wiring.patch` **modifies 39 existing dsh-core files in place** — it never
+   creates new ones. Grouped by purpose:
+
+   - `packages/host/apiproxy/*` — the `filetree.list` / `filetree.select` /
+     `filetree.search` RPC handlers, fetch client, rpc-map, schemas, and their
+     tests
+   - `packages/client/connection/*`, `packages/client/runtime/*`,
+     `packages/api/remotes/*`, `packages/test-support/client-runtime/*` — the
+     workspace contract (`listDir`, `searchEntries`, selection), the service
+     implementation, and the test doubles
+   - `packages/client/ui-sidebar/*` — the `sidebar.filetree` slot, the
+     Workspace/Files tab switch, and its locales
+   - `packages/core/session/src/known-event-types.ts` — adds `filetree/change`
+     to the forwarded-event allowlist
+   - `packages/bundle/web-app/*` — the web-app mount rows for the new packages
+   - `tsconfig.base.json` / `tsconfig.client.json` / `tsconfig.host.json` — the
+     workspace references and host-boot registrations
+
+   `integration/new-files/` holds the **two files dsh core doesn't have at
+   all** — the apiproxy filetree API surface and its zod schemas — which a
+   patch cannot express. `cp -r integration/new-files/* .` from the repo root
+   drops them at their final paths:
+
+   ```
+   packages/host/apiproxy/src/api/filetree.ts
+   packages/host/apiproxy/src/api/filetree.schema.ts
    ```
 
    `wiring.patch` is a snapshot of dsh-core changes against the checkout this
