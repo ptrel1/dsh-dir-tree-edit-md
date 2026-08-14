@@ -1,0 +1,987 @@
+diff --git a/docs/persistence-catalog.md b/docs/persistence-catalog.md
+index c400298f7d..608a8c9676 100644
+--- a/docs/persistence-catalog.md
++++ b/docs/persistence-catalog.md
+@@ -405,6 +405,23 @@ Source: [`packages/compaction/compaction/src/types.ts:33`](../packages/compactio
+ 
+ Source: [`packages/feedback/command-feedback/src/index.ts:62`](../packages/feedback/command-feedback/src/index.ts)
+ 
++### `file/*`
++
++<a id="fileselection--log-only"></a>
++
++#### `file/selection` — log-only
++
++```ts persistence-catalog
++/**
++ * The user changed the file tree's selected-file set. Replaces the prior
++ * selection (an empty `files` clears it). Logged so the model-visible
++ * "selected files" context is reconstructable from the session log.
++ */
++'file/selection': { files: string[] }
++```
++
++Source: [`packages/context/file-selection/src/types.ts:13`](../packages/context/file-selection/src/types.ts)
++
+ ### `goal/*`
+ 
+ <a id="goalchange--log-only"></a>
+diff --git a/packages/api/remotes/package.json b/packages/api/remotes/package.json
+index 42a7d14070..ea07171d13 100644
+--- a/packages/api/remotes/package.json
++++ b/packages/api/remotes/package.json
+@@ -65,6 +65,7 @@
+     "@deepseek-ai/dsh-credentials": "workspace:^",
+     "@deepseek-ai/dsh-goal": "workspace:^",
+     "@deepseek-ai/dsh-cordis-host-runner": "workspace:^",
++    "@deepseek-ai/dsh-host-file-tree": "workspace:^",
+     "@deepseek-ai/dsh-host-plugin-inventory": "workspace:^",
+     "@deepseek-ai/dsh-invariants": "workspace:^",
+     "@deepseek-ai/dsh-agent-presets": "workspace:^",
+@@ -82,6 +83,7 @@
+     "@deepseek-ai/dsh-credentials": "workspace:^",
+     "@deepseek-ai/dsh-goal": "workspace:^",
+     "@deepseek-ai/dsh-cordis-host-runner": "workspace:^",
++    "@deepseek-ai/dsh-host-file-tree": "workspace:^",
+     "@deepseek-ai/dsh-host-plugin-inventory": "workspace:^",
+     "@deepseek-ai/dsh-invariants": "workspace:^",
+     "@deepseek-ai/dsh-agent-presets": "workspace:^",
+diff --git a/packages/api/remotes/src/client/index.ts b/packages/api/remotes/src/client/index.ts
+index 210ec0bf80..3c6df9d484 100644
+--- a/packages/api/remotes/src/client/index.ts
++++ b/packages/api/remotes/src/client/index.ts
+@@ -26,6 +26,7 @@ export type {} from '@deepseek-ai/dsh-credentials/types'
+ export type {} from '@deepseek-ai/dsh-llm/types'
+ export type {} from '@deepseek-ai/dsh-agent-presets/types'
+ export type {} from '@deepseek-ai/dsh-settings/types'
++export type {} from '@deepseek-ai/dsh-host-file-tree/types'
+ 
+ /**
+  * The carrier's Client-facing types, re-exported so a business package names one
+@@ -34,7 +35,8 @@ export type {} from '@deepseek-ai/dsh-settings/types'
+  */
+ export type {
+   ClientResponse, ConfigurableProviderView, ConnectionHandle, ConnectionSinks, ContentBlock,
+-  CredentialView, DirectoryListing, DiscoveredModelView, HistoryEntry, HostFrame, IApiClient,
++  CredentialView, DirectoryListing, DiscoveredModelView, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus,
++  FileTreeListing, HistoryEntry, HostFrame, IApiClient,
+   MessageId, ModelCatalogFailure, ModelProviderGroup, ModelReasoningEffort, ModelSelection,
+   MuxFrame, PromptContentPart, QuestionResponsePayload, QueueAction, RpcError, RpcId, RpcReceipt,
+   RpcRequest, RpcResponse, RpcResult, SessionId, SessionModels, SessionSearchItem,
+diff --git a/packages/api/remotes/src/index.ts b/packages/api/remotes/src/index.ts
+index 6572c11938..13156cf39e 100644
+--- a/packages/api/remotes/src/index.ts
++++ b/packages/api/remotes/src/index.ts
+@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-credentials/types'
+ import type {} from '@deepseek-ai/dsh-llm/types'
+ import type {} from '@deepseek-ai/dsh-agent-presets/types'
+ import type {} from '@deepseek-ai/dsh-settings/types'
++import type {} from '@deepseek-ai/dsh-host-file-tree/types'
+ 
+ export {
+   ApiRemoteSessionNotFound,
+diff --git a/packages/api/remotes/src/remote-events.ts b/packages/api/remotes/src/remote-events.ts
+index 2174336532..da2b243689 100644
+--- a/packages/api/remotes/src/remote-events.ts
++++ b/packages/api/remotes/src/remote-events.ts
+@@ -18,6 +18,7 @@ export const API_REMOTE_FORWARDED_EVENTS = [
+   'agent-preset/selected',
+   'commands/change',
+   'credentials/updated',
++  'filetree/change',
+   'cordis/request-run',
+   'cordis/request-run-resolved',
+   'cordis/dynamic-package',
+diff --git a/packages/api/remotes/tsconfig.host.json b/packages/api/remotes/tsconfig.host.json
+index 61eae810f4..d795625858 100644
+--- a/packages/api/remotes/tsconfig.host.json
++++ b/packages/api/remotes/tsconfig.host.json
+@@ -22,6 +22,9 @@
+     {
+       "path": "../../core/session"
+     },
++    {
++      "path": "../../host/file-tree"
++    },
+     {
+       "path": "../../credentials/credentials"
+     },
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index b06e63b54f..08da4119dd 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -90,6 +90,16 @@
+     - id: directory-picker
+       name: '@deepseek-ai/dsh-host-directory-picker-auto'
+ 
++    # Workspace file-tree backend: level listing with git status plus Chokidar
++    # change events the api-gateway forwards to clients as `filetree/change`.
++    - id: file-tree
++      name: '@deepseek-ai/dsh-host-file-tree-local'
++
++    # Logs the file tree's selected-file set and renders it into the system
++    # prompt, so the model knows which files the user marked.
++    - id: file-selection
++      name: '@deepseek-ai/dsh-file-selection'
++
+     # Read-only projection of current Loader entries for trusted client RPCs.
+     - id: plugin-inventory
+       name: '@deepseek-ai/dsh-host-plugin-inventory'
+@@ -219,6 +229,10 @@
+     - id: ui-workspace
+       name: '@deepseek-ai/dsh-client-ui-workspace'
+ 
++    # Sidebar file tree: fills the shell's sidebar.filetree hole.
++    - id: ui-file-tree
++      name: '@deepseek-ai/dsh-client-ui-file-tree'
++
+     # Input triggers: the '/' | '@' pipeline (ui-input-trigger), the command surface over
+     # it (ui-commands), and the two reference sources (ui-skill / ui-subagent).
+     - id: ui-input-trigger
+diff --git a/packages/bundle/web-app/package.json b/packages/bundle/web-app/package.json
+index ca4709a2a9..830a10beaf 100644
+--- a/packages/bundle/web-app/package.json
++++ b/packages/bundle/web-app/package.json
+@@ -59,6 +59,7 @@
+     "@deepseek-ai/dsh-client-ui-deliverables": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-directory-picker-browse": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-directory-picker-native": "workspace:^",
++    "@deepseek-ai/dsh-client-ui-file-tree": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-message-feedback": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-goal": "workspace:^",
+     "@deepseek-ai/dsh-client-ui-layout": "workspace:^",
+@@ -85,12 +86,14 @@
+     "@deepseek-ai/dsh-code-runtime-worker-thread": "workspace:^",
+     "@deepseek-ai/dsh-cordis-client-runner": "workspace:^",
+     "@deepseek-ai/dsh-cordis-host-runner": "workspace:^",
++    "@deepseek-ai/dsh-file-selection": "workspace:^",
+     "@deepseek-ai/dsh-web-frontend": "workspace:^",
+     "@deepseek-ai/dsh-host-frontend-static": "workspace:^",
+     "@deepseek-ai/dsh-host-apiproxy": "workspace:^",
+     "@deepseek-ai/dsh-host-directory-picker-auto": "workspace:^",
+     "@deepseek-ai/dsh-host-directory-picker-browse": "workspace:^",
+     "@deepseek-ai/dsh-host-directory-picker-native": "workspace:^",
++    "@deepseek-ai/dsh-host-file-tree-local": "workspace:^",
+     "@deepseek-ai/dsh-host-plugin-inventory": "workspace:^",
+     "@deepseek-ai/dsh-host-webserver": "workspace:^",
+     "@deepseek-ai/dsh-message-feedback": "workspace:^",
+diff --git a/packages/client/connection/src/client/api.ts b/packages/client/connection/src/client/api.ts
+index 1b7627b293..b24f093d8d 100644
+--- a/packages/client/connection/src/client/api.ts
++++ b/packages/client/connection/src/client/api.ts
+@@ -8,7 +8,7 @@
+ export type {
+   ApiProxy, SessionsApi, SessionSearchItem, SessionSummary, PromptContentPart, HostApi, EventsApi, MuxFrame, HostFrame,
+   ApprovalResponsePayload, QuestionResponsePayload, HistoryEntry, ToolEventView,
+-  DirectoryEntry, DirectoryListing,
++  DirectoryEntry, DirectoryListing, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing,
+   ResponseValue, WorkspaceApi, WorkspaceId, WorkspaceView,
+   SkillsApi, SkillEntry,
+   ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+diff --git a/packages/client/connection/src/client/fixture.ts b/packages/client/connection/src/client/fixture.ts
+index dd0566486e..aeb82d5ec8 100644
+--- a/packages/client/connection/src/client/fixture.ts
++++ b/packages/client/connection/src/client/fixture.ts
+@@ -2563,6 +2563,10 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
+       },
+       openPath: request => ok(request, { opened: true as const }),
+     },
++    filetree: {
++      list: request => ok(request, { path: request.payload.path, entries: [], truncated: false }),
++      select: request => ok(request, { selected: [...request.payload.files] }),
++    },
+     workspace: {
+       list: request => ok(request, {
+         items: workspaces.map(w => ({ ...w })),
+@@ -3098,6 +3102,8 @@ export class FixtureApiClient extends AbstractApiClient {
+       case 'host.listDirectory': return this.api.host.listDirectory(request, new AbortController().signal)
+       case 'host.createDirectory': return this.api.host.createDirectory(request)
+       case 'host.openPath': return this.api.host.openPath(request, new AbortController().signal)
++      case 'filetree.list': return this.api.filetree.list(request, signal)
++      case 'filetree.select': return this.api.filetree.select(request)
+       case 'workspace.list': return this.api.workspace.list(request)
+       case 'workspace.create': return this.api.workspace.create(request)
+       case 'workspace.rename': return this.api.workspace.rename(request)
+diff --git a/packages/client/connection/src/client/index.ts b/packages/client/connection/src/client/index.ts
+index c4470b13aa..56b5efd1b9 100644
+--- a/packages/client/connection/src/client/index.ts
++++ b/packages/client/connection/src/client/index.ts
+@@ -16,7 +16,7 @@ import type { ClientConnectionRpc } from '../rpc.ts'
+ export type {
+   ApiProxy, SessionsApi, SessionSearchItem, SessionSummary, PromptContentPart, HostApi, EventsApi, MuxFrame, HostFrame,
+   ApprovalResponsePayload, QuestionResponsePayload, HistoryEntry, ToolEventView,
+-  DirectoryEntry, DirectoryListing,
++  DirectoryEntry, DirectoryListing, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing,
+   ToolCallView, ToolResultView, WorkspaceApi, WorkspaceId, WorkspaceView,
+   SkillsApi, SkillEntry,
+   ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+diff --git a/packages/client/connection/tests/fake-api.client.ts b/packages/client/connection/tests/fake-api.client.ts
+index bee4fc0ce0..9868ae2572 100644
+--- a/packages/client/connection/tests/fake-api.client.ts
++++ b/packages/client/connection/tests/fake-api.client.ts
+@@ -148,6 +148,11 @@ export class FakeApiClient implements IApiClient {
+     openPath: payload => this.record('host.openPath', payload, this.onOpenPath(payload)),
+   }
+ 
++  readonly filetree: IApiClient['filetree'] = {
++    list: payload => this.record('filetree.list', payload, Promise.resolve(ok({ path: '/f', entries: [], truncated: false }))),
++    select: payload => this.record('filetree.select', payload, Promise.resolve(ok({ selected: [...(payload as { files: string[] }).files] }))),
++  }
++
+   readonly workspace: IApiClient['workspace'] = {
+     list: (payload: unknown) => this.record('workspace.list', payload, Promise.resolve(ok({ items: [], archivedSessionIds: [] }))),
+     create: (payload: unknown) => this.record('workspace.create', payload, Promise.resolve(ok({
+diff --git a/packages/client/runtime/src/client/contract/workspaces.ts b/packages/client/runtime/src/client/contract/workspaces.ts
+index 4012086c3d..8a1e0d281d 100644
+--- a/packages/client/runtime/src/client/contract/workspaces.ts
++++ b/packages/client/runtime/src/client/contract/workspaces.ts
+@@ -6,7 +6,7 @@
+  * the concrete class. Widening this interface is the explicit act of
+  * widening what features may do to the workspaces domain.
+  */
+-import type { DirectoryListing, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
++import type { DirectoryListing, FileTreeListing, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
+ import type { WorkspaceListState } from '../workspaces/service.ts'
+ import type { ObservableSnapshot } from './store.ts'
+ 
+@@ -58,6 +58,19 @@ export interface IWorkspaces {
+    * @param path - absolute or host-resolvable path.
+    */
+   openPath(path: string): Promise<void>
++  /**
++   * List one directory level through the file-tree capability.
++   * @param path - absolute directory to list (a session's workspace root).
++   * @param signal - aborts the wire request and the Host's scan.
++   * @returns the level's children with per-file git status.
++   */
++  listDir(path: string, signal?: AbortSignal): Promise<FileTreeListing>
++  /**
++   * Record a session's selected-file set (the file tree's multi-select).
++   * @param sessionId - the session whose selection changed.
++   * @param files - the complete selected-path set.
++   */
++  selectFiles(sessionId: SessionId, files: string[]): Promise<void>
+   /**
+    * Rename a Workspace.
+    * @param workspaceId - target workspace.
+diff --git a/packages/client/runtime/src/client/index.ts b/packages/client/runtime/src/client/index.ts
+index b5433bb573..2e7c945f54 100644
+--- a/packages/client/runtime/src/client/index.ts
++++ b/packages/client/runtime/src/client/index.ts
+@@ -64,7 +64,8 @@ export type { SubagentAddress, JobView } from '@deepseek-ai/dsh-client-connectio
+ export type { WorkspaceListPhase } from './workspaces/manager.ts'
+ export type { WorkspaceListState } from './workspaces/service.ts'
+ export type {
+-  DirectoryEntry, DirectoryListing, WorkspaceId, WorkspaceView,
++  DirectoryEntry, DirectoryListing, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing,
++  WorkspaceId, WorkspaceView,
+ } from '@deepseek-ai/dsh-client-connection/client'
+ // Runtime owns the snapshot store; web-react only binds it to React.
+ export { createSnapshotStore, defineStore, shallowEqual } from './contract/store.ts'
+diff --git a/packages/client/runtime/src/client/workspaces/service.ts b/packages/client/runtime/src/client/workspaces/service.ts
+index c23e3b3a6c..5d9642875c 100644
+--- a/packages/client/runtime/src/client/workspaces/service.ts
++++ b/packages/client/runtime/src/client/workspaces/service.ts
+@@ -2,7 +2,7 @@
+ 
+ import type { Context } from '@deepseek-ai/cordis'
+ import type {
+-  DirectoryListing, IApiClient, RpcError,
++  DirectoryListing, FileTreeListing, IApiClient, RpcError,
+   SessionId, WorkspaceId, WorkspaceView,
+ } from '@deepseek-ai/dsh-api-remotes/client'
+ import type { SnapshotStore } from '../contract/store.ts'
+@@ -249,6 +249,28 @@ export class WorkspaceRuntime implements IWorkspaces {
+     }
+   }
+ 
++  /**
++   * List one directory level through the file-tree capability.
++   * @param path - absolute directory to list (a session's workspace root).
++   * @param signal - aborts the wire request and the Host's scan.
++   * @returns the level's children with per-file git status.
++   */
++  async listDir(path: string, signal?: AbortSignal): Promise<FileTreeListing> {
++    const response = await this.api.filetree.list({ path }, signal)
++    if (!response.result.ok) throw new Error(`file tree list failed: ${response.result.error.message}`)
++    return response.result.value
++  }
++
++  /**
++   * Record a session's selected-file set (the file tree's multi-select).
++   * @param sessionId - the session whose selection changed.
++   * @param files - the complete selected-path set.
++   */
++  async selectFiles(sessionId: SessionId, files: string[]): Promise<void> {
++    const response = await this.api.filetree.select({ sessionId, files })
++    if (!response.result.ok) throw new Error(`file tree selection failed: ${response.result.error.message}`)
++  }
++
+   /**
+    * Rename a Workspace.
+    * @param workspaceId - target workspace.
+diff --git a/packages/client/runtime/tests/fake-api.client.ts b/packages/client/runtime/tests/fake-api.client.ts
+index 33a0efbbfd..443fc171f6 100644
+--- a/packages/client/runtime/tests/fake-api.client.ts
++++ b/packages/client/runtime/tests/fake-api.client.ts
+@@ -130,6 +130,11 @@ export class FakeApiClient implements IApiClient {
+   onCreateDirectory: (payload: unknown) => Promise<RpcResponse<{ path: string }>> =
+     () => Promise.resolve(ok({ path: '/home/fake/new' }))
+ 
++  onListDir: (payload: unknown) => Promise<RpcResponse<{ path: string; entries: never[]; truncated: boolean }>> =
++    () => Promise.resolve(ok({ path: '/f', entries: [], truncated: false }))
++  onSelect: (payload: unknown) => Promise<RpcResponse<{ selected: string[] }>> =
++    () => Promise.resolve(ok({ selected: [] }))
++
+   private readonly muxConns: StreamConn<MuxFrame>[] = []
+   private readonly hostConns: StreamConn<HostFrame>[] = []
+   lastSearchSignal: AbortSignal | undefined
+@@ -182,6 +187,11 @@ export class FakeApiClient implements IApiClient {
+     openPath: (payload: unknown) => this.record('host.openPath', payload, this.onOpenPath(payload)),
+   }
+ 
++  readonly filetree: IApiClient['filetree'] = {
++    list: (payload: unknown) => this.record('filetree.list', payload, this.onListDir(payload)),
++    select: (payload: unknown) => this.record('filetree.select', payload, this.onSelect(payload)),
++  }
++
+   // The archive-set field defaults at the binding below so list stubs keep
+   // the pre-archive `{ items }` shape; a stub carrying the field wins.
+   onWorkspaceList: (payload: unknown) => Promise<RpcResponse<{ items: never[]; archivedSessionIds?: never[] }>> =
+diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.module.css b/packages/client/ui-sidebar/src/client/SidebarRoot.module.css
+index 300075b88d..19541ec364 100644
+--- a/packages/client/ui-sidebar/src/client/SidebarRoot.module.css
++++ b/packages/client/ui-sidebar/src/client/SidebarRoot.module.css
+@@ -241,6 +241,36 @@
+   padding-left: 0;
+ }
+ 
++/* Workspace/Files view toggle: a two-segment control above the region. */
++.viewToggle {
++  flex: none;
++  display: flex;
++  gap: 2px;
++  margin: 0 2px 8px;
++  padding: 2px;
++  border: 1px solid var(--dsw-alias-border-l2);
++  border-radius: 10px;
++}
++
++.viewSegment {
++  flex: 1;
++  height: 26px;
++  padding: 0 8px;
++  border: none;
++  border-radius: 7px;
++  background: transparent;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 13px;
++  font-weight: 500;
++  line-height: 1;
++  cursor: pointer;
++}
++
++.viewSegmentActive {
++  background: var(--dsw-alias-interactive-bg-hover);
++  color: var(--dsw-alias-label-primary);
++}
++
+ /* Footer seats: additive actions stack above Settings. Each occupant owns its
+    button geometry and hover chrome. */
+ .footArea {
+diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+index d3fe6a63c1..b56aea4fbc 100644
+--- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
++++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+@@ -59,6 +59,9 @@ export function SidebarRoot({
+   }, [collapsed])
+   const wide = !collapsed || !settled
+ 
++  // Workspace/Files region switch: shell-owned so both occupants share one control.
++  const [view, setView] = useState<'workspace' | 'files'>('workspace')
++
+   // Freeze the content at its expanded width while it fades out (collapsed
+   // && wide): the sliding column then clips it instead of reflowing it. The
+   // rail layout (.collapsed styles) only applies once the fade settles.
+@@ -169,13 +172,39 @@ export function SidebarRoot({
+         </button>
+       </Tooltip>
+ 
++      {wide && (
++        <div className={css.viewToggle}>
++          <button
++            type="button"
++            className={clsx(css.viewSegment, view === 'workspace' && css.viewSegmentActive)}
++            aria-pressed={view === 'workspace'}
++            onClick={() => { setView('workspace') }}
++          >
++            {t('view.workspace')}
++          </button>
++          <button
++            type="button"
++            className={clsx(css.viewSegment, view === 'files' && css.viewSegmentActive)}
++            aria-pressed={view === 'files'}
++            onClick={() => { setView('files') }}
++          >
++            {t('view.files')}
++          </button>
++        </div>
++      )}
++
+       {/* The browsing region fills the column between the controls and the
+           foot in both states; its rail icon column rides the same slot. */}
+       <div className={css.regionArea}>
+-        {renderSlot('sidebar.workspaces', {
+-          wide,
+-          expandSidebar: () => { if (collapsed) toggleSidebar() },
+-        })}
++        {view === 'files'
++          ? renderSlot('sidebar.filetree', {
++            wide,
++            expandSidebar: () => { if (collapsed) toggleSidebar() },
++          })
++          : renderSlot('sidebar.workspaces', {
++            wide,
++            expandSidebar: () => { if (collapsed) toggleSidebar() },
++          })}
+       </div>
+ 
+       {/* Footer actions stack above Settings in both sidebar widths. */}
+diff --git a/packages/client/ui-sidebar/src/client/contract/slots.ts b/packages/client/ui-sidebar/src/client/contract/slots.ts
+index a8c4f2894d..89b6885c0b 100644
+--- a/packages/client/ui-sidebar/src/client/contract/slots.ts
++++ b/packages/client/ui-sidebar/src/client/contract/slots.ts
+@@ -22,6 +22,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * registers the browser.
+      */
+     'sidebar.workspaces': { kind: 'single'; scope: 'root'; owner: SidebarSectionOwnerProps }
++    /**
++     * The file-tree browsing region, toggled against the workspace browser by
++     * the shell's view control. Declared by this package's 'sidebar' entry;
++     * ui-file-tree registers the tree.
++     */
++    'sidebar.filetree': { kind: 'single'; scope: 'root'; owner: SidebarSectionOwnerProps }
+     /**
+      * The settings seat at the sidebar foot. Declared by this package's
+      * 'sidebar' entry; ui-settings registers its trigger row + modal panel.
+@@ -85,5 +91,5 @@ export type SidebarRootInjected = {
+  */
+ export type SidebarRootComponentProps =
+   PropsRuntime<'sidebar'>
+-  & PropsRenderSlots<'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'>
++  & PropsRenderSlots<'sidebar.workspaces' | 'sidebar.filetree' | 'sidebar.settings' | 'sidebar.footer.action'>
+   & SidebarRootInjected & PropsLocale<'sidebar'>
+diff --git a/packages/client/ui-sidebar/src/client/index.ts b/packages/client/ui-sidebar/src/client/index.ts
+index 0bd2c98295..ed4fa95d72 100644
+--- a/packages/client/ui-sidebar/src/client/index.ts
++++ b/packages/client/ui-sidebar/src/client/index.ts
+@@ -46,6 +46,7 @@ export function apply(ctx: ClientContext): void {
+       // registers the foot trigger + settings panel.
+       children: {
+         'sidebar.workspaces': { kind: 'single', scope: 'root' },
++        'sidebar.filetree': { kind: 'single', scope: 'root' },
+         'sidebar.settings': { kind: 'single', scope: 'root' },
+         'sidebar.footer.action': { kind: 'list', scope: 'root' },
+       },
+diff --git a/packages/client/ui-sidebar/src/client/locales.ts b/packages/client/ui-sidebar/src/client/locales.ts
+index 8cf5ac6d7b..2a8ee7ccf5 100644
+--- a/packages/client/ui-sidebar/src/client/locales.ts
++++ b/packages/client/ui-sidebar/src/client/locales.ts
+@@ -6,6 +6,8 @@ export const zh = {
+   'session.new.label': '新建会话',
+   'toggle.open': '打开侧边栏',
+   'toggle.collapse': '收起侧边栏',
++  'view.workspace': '工作区',
++  'view.files': '文件',
+ } satisfies Record<string, string>
+ 
+ /** The sidebar namespace key union. */
+@@ -17,4 +19,6 @@ export const en = {
+   'session.new.label': 'New session',
+   'toggle.open': 'Open sidebar',
+   'toggle.collapse': 'Collapse sidebar',
++  'view.workspace': 'Workspace',
++  'view.files': 'Files',
+ } satisfies Record<SidebarKey, string>
+diff --git a/packages/core/session/src/known-event-types.ts b/packages/core/session/src/known-event-types.ts
+index d65935f1b8..9cfe71c4b3 100644
+--- a/packages/core/session/src/known-event-types.ts
++++ b/packages/core/session/src/known-event-types.ts
+@@ -31,6 +31,7 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
+   'compaction/start',
+   'compaction/summary',
+   'feedback/record',
++  'file/selection',
+   'goal/change',
+   'hook/invoked',
+   'hook/result',
+diff --git a/packages/host/apiproxy/package.json b/packages/host/apiproxy/package.json
+index ba83efedb5..3691b244b6 100644
+--- a/packages/host/apiproxy/package.json
++++ b/packages/host/apiproxy/package.json
+@@ -54,6 +54,8 @@
+     "@deepseek-ai/dsh-credentials": "workspace:^",
+     "@deepseek-ai/dsh-goal": "workspace:^",
+     "@deepseek-ai/dsh-host-directory-picker": "workspace:^",
++    "@deepseek-ai/dsh-host-file-tree": "workspace:^",
++    "@deepseek-ai/dsh-file-selection": "workspace:^",
+     "@deepseek-ai/dsh-llm": "workspace:^",
+     "@deepseek-ai/dsh-native-command": "workspace:^",
+     "@deepseek-ai/dsh-session": "workspace:^",
+diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
+index bda99362b6..12386c4ee3 100644
+--- a/packages/host/apiproxy/src/api-proxy.ts
++++ b/packages/host/apiproxy/src/api-proxy.ts
+@@ -99,6 +99,8 @@ import type {
+ } from '@deepseek-ai/dsh-user-questions'
+ import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
+ import { DirectoryPickerError } from '@deepseek-ai/dsh-host-directory-picker'
++import { FileTreeError } from '@deepseek-ai/dsh-host-file-tree'
++import type {} from '@deepseek-ai/dsh-file-selection'
+ import {
+   ApiRemoteSessionNotFound as SessionNotFound,
+   ApiRemoteSubagentSessionOwnership as SubagentSessionOwnership,
+@@ -632,6 +634,14 @@ function directoryError(error: unknown): RpcError {
+   return { code: 'internal', message: error instanceof Error ? error.message : String(error), details: {} }
+ }
+ 
++/** Map a file-tree listing failure onto the wire error vocabulary (unknown throws stay internal). */
++function fileTreeError(error: unknown): RpcError {
++  if (error instanceof FileTreeError) {
++    return { code: 'tree-unreadable', message: error.message, details: { path: error.path } }
++  }
++  return { code: 'internal', message: error instanceof Error ? error.message : String(error), details: {} }
++}
++
+ /** Resolved Agent model and project-directory defaults consumed by the API implementation. */
+ export interface ApiProxyDefaults {
+   /**
+@@ -3010,6 +3020,43 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+       },
+     },
+ 
++    filetree: {
++      async list(request, signal) {
++        const fileTree = ctx.get('fileTree')
++        if (fileTree === undefined) {
++          return err(request, {
++            code: 'file-tree-unavailable',
++            message: 'filetree.list needs a file-tree backend; none is composed',
++            details: {},
++          })
++        }
++        try {
++          return ok(request, await fileTree.listDir(request.payload.path, signal))
++        } catch (error: unknown) {
++          // An abort is the caller's own timeout/disconnect, not a server failure.
++          if (signal.aborted) {
++            return err(request, { code: 'cancelled', message: 'file tree listing was aborted', details: {} })
++          }
++          return err(request, fileTreeError(error))
++        }
++      },
++
++      async select(request) {
++        const fileSelection = ctx.get('fileSelection')
++        if (fileSelection === undefined) {
++          return err(request, {
++            code: 'file-tree-unavailable',
++            message: 'filetree.select needs a file-selection service; none is composed',
++            details: {},
++          })
++        }
++        const found = await agentFor(request.payload.sessionId)
++        if ('error' in found) return err(request, found.error)
++        fileSelection.select(found.agent.session, request.payload.files)
++        return ok(request, { selected: [...request.payload.files] })
++      },
++    },
++
+     goals: {
+       // Mutations only — the read side is the 'goal' session projection.
+       // Every verb resolves the session's agent (agentFor: implicit cold
+diff --git a/packages/host/apiproxy/src/api/index.ts b/packages/host/apiproxy/src/api/index.ts
+index b5e1d1ffd9..ff2a327e1b 100644
+--- a/packages/host/apiproxy/src/api/index.ts
++++ b/packages/host/apiproxy/src/api/index.ts
+@@ -6,6 +6,7 @@
+ 
+ import type { SessionsApi } from './sessions.ts'
+ import type { HostApi } from './host.ts'
++import type { FileTreeApi } from './filetree.ts'
+ import type { WorkspaceApi } from './workspace.ts'
+ import type { AgentPresetsApi } from './agent-presets.ts'
+ import type { SkillsApi } from './skills.ts'
+@@ -23,6 +24,7 @@ export interface ApiProxy {
+   sessions: SessionsApi
+   subagents: SubagentsApi
+   host: HostApi
++  filetree: FileTreeApi
+   workspace: WorkspaceApi
+   skills: SkillsApi
+   agentPresets: AgentPresetsApi
+@@ -48,6 +50,7 @@ export type {
+   SessionListMetadata, SessionProjectionsBlock, SessionSearchItem, SessionsApi, SessionSummary,
+ } from './sessions.ts'
+ export type { DirectoryEntry, DirectoryListing, HostApi } from './host.ts'
++export type { FileTreeApi, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing } from './filetree.ts'
+ export type {
+   SubagentAddress, SubagentCatalog, SubagentInterruptReceipt, SubagentListEntry,
+   SubagentPromptReceipt, SubagentsApi,
+diff --git a/packages/host/apiproxy/src/api/rpc-map.ts b/packages/host/apiproxy/src/api/rpc-map.ts
+index 80dede1799..d9dc73bad7 100644
+--- a/packages/host/apiproxy/src/api/rpc-map.ts
++++ b/packages/host/apiproxy/src/api/rpc-map.ts
+@@ -6,6 +6,7 @@
+ 
+ import type { SessionsApi } from './sessions.ts'
+ import type { HostApi } from './host.ts'
++import type { FileTreeApi } from './filetree.ts'
+ import type { WorkspaceApi } from './workspace.ts'
+ import type { AgentPresetsApi } from './agent-presets.ts'
+ import type { SkillsApi } from './skills.ts'
+@@ -43,6 +44,8 @@ export interface RpcMethodMap {
+   'host.listDirectory': HostApi['listDirectory']
+   'host.createDirectory': HostApi['createDirectory']
+   'host.openPath': HostApi['openPath']
++  'filetree.list': FileTreeApi['list']
++  'filetree.select': FileTreeApi['select']
+   'workspace.list': WorkspaceApi['list']
+   'workspace.create': WorkspaceApi['create']
+   'workspace.rename': WorkspaceApi['rename']
+diff --git a/packages/host/apiproxy/src/api/rpc.schema.ts b/packages/host/apiproxy/src/api/rpc.schema.ts
+index 177f0ffd29..361c587fd4 100644
+--- a/packages/host/apiproxy/src/api/rpc.schema.ts
++++ b/packages/host/apiproxy/src/api/rpc.schema.ts
+@@ -47,6 +47,8 @@ export const rpcErrorSchema: z.ZodType<RpcError> = z.discriminatedUnion('code',
+   z.object({ code: z.literal('directory-exists'), message: z.string(), details: z.object({ path: z.string() }) }),
+   z.object({ code: z.literal('directory-create-failed'), message: z.string(), details: z.object({ path: z.string() }) }),
+   z.object({ code: z.literal('directory-picker-unavailable'), message: z.string(), details: z.object({ capability: z.string() }) }),
++  z.object({ code: z.literal('file-tree-unavailable'), message: z.string(), details: z.object({}) }),
++  z.object({ code: z.literal('tree-unreadable'), message: z.string(), details: z.object({ path: z.string() }) }),
+   z.object({ code: z.literal('agent-preset-read-only'), message: z.string(), details: z.object({ agentPreset: z.string(), reason: z.string() }) }),
+   z.object({ code: z.literal('agent-preset-locked'), message: z.string(), details: z.object({ sessionId: z.string(), agentPreset: z.string() }) }),
+   z.object({ code: z.literal('agent-preset-conflict'), message: z.string(), details: z.object({ sessionId: z.string(), requestedPreset: z.string(), existingPreset: z.string().optional() }) }),
+diff --git a/packages/host/apiproxy/src/api/rpc.ts b/packages/host/apiproxy/src/api/rpc.ts
+index 134a39eba9..3fc7f00c4c 100644
+--- a/packages/host/apiproxy/src/api/rpc.ts
++++ b/packages/host/apiproxy/src/api/rpc.ts
+@@ -45,6 +45,8 @@ export interface RpcErrorDetailsMap {
+   'directory-exists': { path: string }
+   'directory-create-failed': { path: string }
+   'directory-picker-unavailable': { capability: string }
++  'file-tree-unavailable': {}
++  'tree-unreadable': { path: string }
+   'agent-preset-read-only': { agentPreset: string; reason: string }
+   'agent-preset-locked': { sessionId: SessionId; agentPreset: string }
+   'agent-preset-conflict': { sessionId: SessionId; requestedPreset: string; existingPreset?: string }
+diff --git a/packages/host/apiproxy/src/fetch/client.ts b/packages/host/apiproxy/src/fetch/client.ts
+index 70e3ece58f..0026471d29 100644
+--- a/packages/host/apiproxy/src/fetch/client.ts
++++ b/packages/host/apiproxy/src/fetch/client.ts
+@@ -17,6 +17,7 @@ import {
+   hostCreateDirectoryValueSchema, hostDescribeValueSchema,
+   hostListDirectoryValueSchema, hostOpenPathValueSchema, hostPickDirectoryValueSchema,
+ } from '../api/host.schema.ts'
++import { fileTreeListValueSchema, fileTreeSelectValueSchema } from '../api/filetree.schema.ts'
+ import {
+   sessionCancelValueSchema,
+   sessionAttachmentValueSchema,
+@@ -112,6 +113,10 @@ export interface IApiClient {
+     createDirectory(payload: RequestPayload<'host.createDirectory'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'host.createDirectory'>>>
+     openPath(payload: RequestPayload<'host.openPath'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'host.openPath'>>>
+   }
++  filetree: {
++    list(payload: RequestPayload<'filetree.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.list'>>>
++    select(payload: RequestPayload<'filetree.select'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.select'>>>
++  }
+   workspace: {
+     list(payload: RequestPayload<'workspace.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.list'>>>
+     create(payload: RequestPayload<'workspace.create'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.create'>>>
+@@ -191,6 +196,8 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
+   'host.listDirectory': hostListDirectoryValueSchema,
+   'host.createDirectory': hostCreateDirectoryValueSchema,
+   'host.openPath': hostOpenPathValueSchema,
++  'filetree.list': fileTreeListValueSchema,
++  'filetree.select': fileTreeSelectValueSchema,
+   'workspace.list': workspaceListValueSchema,
+   'workspace.create': workspaceCreateValueSchema,
+   'workspace.rename': workspaceRenameValueSchema,
+@@ -443,6 +450,11 @@ export abstract class AbstractApiClient implements IApiClient {
+     openPath: (payload, signal) => this.callUnary('host.openPath', payload, signal),
+   }
+ 
++  readonly filetree: IApiClient['filetree'] = {
++    list: (payload, signal) => this.callUnary('filetree.list', payload, signal),
++    select: (payload, signal) => this.callUnary('filetree.select', payload, signal),
++  }
++
+   readonly workspace: IApiClient['workspace'] = {
+     list: (payload, signal) => this.callUnary('workspace.list', payload, signal),
+     create: (payload, signal) => this.callUnary('workspace.create', payload, signal),
+diff --git a/packages/host/apiproxy/src/fetch/handler.ts b/packages/host/apiproxy/src/fetch/handler.ts
+index 697171ec53..acf28175df 100644
+--- a/packages/host/apiproxy/src/fetch/handler.ts
++++ b/packages/host/apiproxy/src/fetch/handler.ts
+@@ -34,6 +34,7 @@ import {
+   hostListDirectoryRequestSchema, hostOpenPathRequestSchema,
+   hostPickDirectoryRequestSchema,
+ } from '../api/host.schema.ts'
++import { fileTreeListRequestSchema, fileTreeSelectRequestSchema } from '../api/filetree.schema.ts'
+ import {
+   workspaceArchiveSessionRequestSchema,
+   workspaceCreateRequestSchema,
+@@ -109,6 +110,8 @@ const UNARY_ROUTES: UnaryRoutes = {
+   'host.listDirectory': { schema: hostListDirectoryRequestSchema, invoke: (api, r, signal) => api.host.listDirectory(r, signal) },
+   'host.createDirectory': { schema: hostCreateDirectoryRequestSchema, invoke: (api, r) => api.host.createDirectory(r) },
+   'host.openPath': { schema: hostOpenPathRequestSchema, invoke: (api, r, signal) => api.host.openPath(r, signal) },
++  'filetree.list': { schema: fileTreeListRequestSchema, invoke: (api, r, signal) => api.filetree.list(r, signal) },
++  'filetree.select': { schema: fileTreeSelectRequestSchema, invoke: (api, r) => api.filetree.select(r) },
+   'workspace.list': { schema: workspaceListRequestSchema, invoke: (api, r) => api.workspace.list(r) },
+   'workspace.create': { schema: workspaceCreateRequestSchema, invoke: (api, r) => api.workspace.create(r) },
+   'workspace.rename': { schema: workspaceRenameRequestSchema, invoke: (api, r) => api.workspace.rename(r) },
+diff --git a/packages/host/apiproxy/src/index.ts b/packages/host/apiproxy/src/index.ts
+index ac6c770801..7734164aec 100644
+--- a/packages/host/apiproxy/src/index.ts
++++ b/packages/host/apiproxy/src/index.ts
+@@ -83,6 +83,7 @@ export class ApiProxyService extends Service implements ApiProxy {
+   readonly subagents: ApiProxy['subagents']
+   readonly workspace: ApiProxy['workspace']
+   readonly host: ApiProxy['host']
++  readonly filetree: ApiProxy['filetree']
+   readonly goals: ApiProxy['goals']
+   readonly skills: ApiProxy['skills']
+   readonly agentPresets: ApiProxy['agentPresets']
+@@ -111,6 +112,7 @@ export class ApiProxyService extends Service implements ApiProxy {
+     this.subagents = api.subagents
+     this.workspace = api.workspace
+     this.host = api.host
++    this.filetree = api.filetree
+     this.goals = api.goals
+     this.skills = api.skills
+     this.agentPresets = api.agentPresets
+diff --git a/packages/host/apiproxy/tests/api-proxy-workspace.spec.ts b/packages/host/apiproxy/tests/api-proxy-workspace.spec.ts
+index 54bdb015e4..8ec443921f 100644
+--- a/packages/host/apiproxy/tests/api-proxy-workspace.spec.ts
++++ b/packages/host/apiproxy/tests/api-proxy-workspace.spec.ts
+@@ -12,6 +12,8 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
+ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
+ import { DirectoryPickerError } from '@deepseek-ai/dsh-host-directory-picker'
+ import type { DirectoryPickerCapability } from '@deepseek-ai/dsh-host-directory-picker'
++import { FileTreeError } from '@deepseek-ai/dsh-host-file-tree'
++import type { FileTreeListing } from '@deepseek-ai/dsh-host-file-tree'
+ import WorkspaceRegistry from '@deepseek-ai/dsh-workspace'
+ import type { HostFrame, WorkspaceId } from '@deepseek-ai/dsh-host-apiproxy/api'
+ import type { RpcRequest, RpcResponse } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+@@ -64,6 +66,8 @@ async function harness(
+   extras: {
+     openPath?: (path: string, signal: AbortSignal) => Promise<void>
+     canOpenPath?: () => boolean
++    fileTree?: { listDir: (path: string, signal?: AbortSignal) => Promise<FileTreeListing> }
++    fileSelection?: { select: (session: Session, files: readonly string[]) => void }
+   } = {},
+ ) {
+   const ctx = new Context()
+@@ -102,6 +106,8 @@ async function harness(
+   // Structural picker fake: the gateway only reads capability(); a stable
+   // object per harness mirrors the seam's stability contract.
+   ctx.provide('directoryPicker', { capability: () => picker } as never)
++  if (extras.fileTree !== undefined) ctx.provide('fileTree', extras.fileTree as never)
++  if (extras.fileSelection !== undefined) ctx.provide('fileSelection', extras.fileSelection as never)
+   const api = createApiProxy(ctx, {
+     defaultModelSelection: () => ({ provider: 'test', model: 'test-model' }),
+     cwd: root,
+@@ -228,6 +234,46 @@ describe('host.listDirectory / host.createDirectory', () => {
+   })
+ })
+ 
++describe('filetree.list', () => {
++  it('lists one level through the composed file-tree backend', async () => {
++    const { api } = await harness(undefined, { kind: 'native', pick: async () => null }, {
++      fileTree: {
++        listDir: async (path) => ({
++          path,
++          entries: [{ name: 'a.txt', path: `${path}/a.txt`, kind: 'file', hidden: false, gitStatus: 'modified' }],
++          truncated: false,
++        }),
++      },
++    })
++    const result = expectOk(await api.filetree.list(request({ path: '/proj' }), new AbortController().signal))
++    expect(result.path).toBe('/proj')
++    expect(result.entries[0]).toMatchObject({ name: 'a.txt', kind: 'file', gitStatus: 'modified' })
++    expect(result.truncated).toBe(false)
++  })
++
++  it('fails with file-tree-unavailable when no backend is composed', async () => {
++    const { api } = await harness()
++    expect((await api.filetree.list(request({ path: '/proj' }), new AbortController().signal)).result)
++      .toMatchObject({ ok: false, error: { code: 'file-tree-unavailable' } })
++  })
++
++  it('maps a FileTreeError to tree-unreadable', async () => {
++    const { api } = await harness(undefined, { kind: 'native', pick: async () => null }, {
++      fileTree: {
++        listDir: async () => { throw new FileTreeError('tree-unreadable', '/denied', 'cannot list /denied') },
++      },
++    })
++    expect((await api.filetree.list(request({ path: '/denied' }), new AbortController().signal)).result)
++      .toMatchObject({ ok: false, error: { code: 'tree-unreadable', details: { path: '/denied' } } })
++  })
++
++  it('fails select with file-tree-unavailable when no selection service is composed', async () => {
++    const { api } = await harness()
++    expect((await api.filetree.select(request({ sessionId: 's1' as never, files: ['a.txt'] }))).result)
++      .toMatchObject({ ok: false, error: { code: 'file-tree-unavailable' } })
++  })
++})
++
+ describe('host.openPath', () => {
+   it('describes whether this deployment can reach a user-visible native desktop', async () => {
+     const visible = await harness(undefined, undefined, { canOpenPath: () => true })
+diff --git a/packages/host/apiproxy/tests/client-handler.spec.ts b/packages/host/apiproxy/tests/client-handler.spec.ts
+index 4130d8f210..c5c36ff338 100644
+--- a/packages/host/apiproxy/tests/client-handler.spec.ts
++++ b/packages/host/apiproxy/tests/client-handler.spec.ts
+@@ -21,6 +21,7 @@ function scriptedApi(overrides: {
+   sessions?: Partial<ApiProxy['sessions']>
+   subagents?: Partial<ApiProxy['subagents']>
+   host?: Partial<ApiProxy['host']>
++  filetree?: Partial<ApiProxy['filetree']>
+   skills?: Partial<ApiProxy['skills']>
+   agentPresets?: Partial<ApiProxy['agentPresets']>
+   events?: Partial<ApiProxy['events']>
+@@ -80,6 +81,11 @@ function scriptedApi(overrides: {
+       openPath: r => ok(r, { opened: true as const }),
+       ...overrides.host,
+     },
++    filetree: {
++      list: r => ok(r, { path: '/t', entries: [], truncated: false }),
++      select: r => ok(r, { selected: [...r.payload.files] }),
++      ...overrides.filetree,
++    },
+     workspace: {
+       list: r => ok(r, { items: [], archivedSessionIds: [] }),
+       create: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' }, created: true }),
+diff --git a/packages/host/apiproxy/tests/fetch-carrier.spec.ts b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+index 2000f708ba..eca4fec800 100644
+--- a/packages/host/apiproxy/tests/fetch-carrier.spec.ts
++++ b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+@@ -160,6 +160,14 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
+         return { rpcId: request.rpcId, result: { ok: true, value: { opened: true as const } } }
+       },
+     },
++    filetree: {
++      async list(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { path: '/w', entries: [], truncated: false } } }
++      },
++      async select(request) {
++        return { rpcId: request.rpcId, result: { ok: true, value: { selected: [...request.payload.files] } } }
++      },
++    },
+     workspace: {
+       async list(request) {
+         return { rpcId: request.rpcId, result: { ok: true, value: { items: [], archivedSessionIds: [] } } }
+diff --git a/packages/host/apiproxy/tsconfig.json b/packages/host/apiproxy/tsconfig.json
+index 3ed38b3d77..997b84ff59 100644
+--- a/packages/host/apiproxy/tsconfig.json
++++ b/packages/host/apiproxy/tsconfig.json
+@@ -92,6 +92,12 @@
+     {
+       "path": "../directory-picker"
+     },
++    {
++      "path": "../file-tree"
++    },
++    {
++      "path": "../../context/file-selection"
++    },
+     {
+       "path": "../../extensions/cordis-host-runner"
+     },
+diff --git a/packages/test-support/client-runtime/src/workspaces.ts b/packages/test-support/client-runtime/src/workspaces.ts
+index 4f6b2122cb..dad53f1cd0 100644
+--- a/packages/test-support/client-runtime/src/workspaces.ts
++++ b/packages/test-support/client-runtime/src/workspaces.ts
+@@ -1,7 +1,7 @@
+ /** Test-owned workspaces face: the renderer standard-kit observable plus recorded actions. */
+ import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+ import type {
+-  DirectoryListing, IWorkspaces, SessionId, SnapshotStore, WorkspaceId, WorkspaceListState, WorkspaceView,
++  DirectoryListing, FileTreeListing, IWorkspaces, SessionId, SnapshotStore, WorkspaceId, WorkspaceListState, WorkspaceView,
+ } from '@deepseek-ai/dsh-client-runtime/client'
+ import { workspaceListState } from './fixtures.ts'
+ import type { Stabilizer } from './fixtures.ts'
+@@ -137,6 +137,25 @@ export class TestWorkspaces implements IWorkspaces {
+     }
+   }
+ 
++  /**
++   * File-tree listing (recorded). The default serves an empty level; stub to
++   * shape a tree.
++   * @param path - absolute directory to list (a session's workspace root).
++   * @returns the level's listing.
++   */
++  async listDir(path: string, signal?: AbortSignal): Promise<FileTreeListing> {
++    this.calls.push({ method: 'listDir', args: [path, signal] })
++    const stub = this.stubs.get('listDir')
++    if (stub !== undefined) return await (stub(path, signal) as Promise<FileTreeListing>)
++    return { path, entries: [], truncated: false }
++  }
++
++  async selectFiles(sessionId: SessionId, files: string[]): Promise<void> {
++    this.calls.push({ method: 'selectFiles', args: [sessionId, files] })
++    const stub = this.stubs.get('selectFiles')
++    if (stub !== undefined) await (stub(sessionId, files) as Promise<void>)
++  }
++
+   /**
+    * Browse child creation (recorded). The default joins parent and name.
+    * @param path - absolute existing parent directory.
+diff --git a/tsconfig.base.json b/tsconfig.base.json
+index 16d69db6db..ec5377282e 100644
+--- a/tsconfig.base.json
++++ b/tsconfig.base.json
+@@ -165,6 +165,10 @@
+       "@deepseek-ai/dsh-host-directory-picker-native/*": ["./packages/host/directory-picker-native/src/*"],
+       "@deepseek-ai/dsh-host-directory-picker-auto": ["./packages/host/directory-picker-auto/src"],
+       "@deepseek-ai/dsh-host-directory-picker-auto/*": ["./packages/host/directory-picker-auto/src/*"],
++      "@deepseek-ai/dsh-host-file-tree": ["./packages/host/file-tree/src"],
++      "@deepseek-ai/dsh-host-file-tree/*": ["./packages/host/file-tree/src/*"],
++      "@deepseek-ai/dsh-host-file-tree-local": ["./packages/host/file-tree-local/src"],
++      "@deepseek-ai/dsh-host-file-tree-local/*": ["./packages/host/file-tree-local/src/*"],
+       "@deepseek-ai/dsh-host-apiproxy/client": ["./packages/host/apiproxy/src/fetch/client.ts"],
+       "@deepseek-ai/dsh-host-apiproxy/*": ["./packages/host/apiproxy/src/*"],
+       "@deepseek-ai/dsh-host-webserver": ["./packages/host/webserver/src"],
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+index e599f76f1b..a2bd065d23 100644
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -76,6 +76,7 @@
+     { "path": "./packages/client/ui-jobs" },
+     { "path": "./packages/client/ui-directory-picker-browse" },
+     { "path": "./packages/client/ui-directory-picker-native" },
++    { "path": "./packages/client/ui-file-tree" },
+     { "path": "./packages/client/ui-goal" },
+     { "path": "./packages/client/ui-message-feedback" },
+     { "path": "./packages/client/ui-model-selection" },
+diff --git a/tsconfig.host.json b/tsconfig.host.json
+index 459036247a..41a140ef05 100644
+--- a/tsconfig.host.json
++++ b/tsconfig.host.json
+@@ -172,6 +172,7 @@
+     { "path": "./packages/feedback/command-feedback" },
+     { "path": "./packages/schedule/schedule" },
+     { "path": "./packages/context/time-context" },
++    { "path": "./packages/context/file-selection" },
+     { "path": "./packages/context/tmux-context" },
+     { "path": "./packages/context/session-reference" },
+     { "path": "./packages/interaction/user-questions" },
+@@ -285,6 +286,8 @@
+     { "path": "./packages/host/directory-picker-auto" },
+     { "path": "./packages/host/directory-picker-browse" },
+     { "path": "./packages/host/directory-picker-native" },
++    { "path": "./packages/host/file-tree" },
++    { "path": "./packages/host/file-tree-local" },
+     { "path": "./packages/host/frontend-static" },
+     { "path": "./packages/host/plugin-inventory" },
+     { "path": "./packages/host/webserver" },

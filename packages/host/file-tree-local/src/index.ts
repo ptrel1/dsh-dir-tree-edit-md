@@ -1,0 +1,318 @@
+/**
+ * Local-filesystem backend of the file-tree seam: registers `ctx.fileTree` with
+ * one-level directory listing (files and directories), per-file git status read
+ * through `ctx.subprocess`, and a Chokidar watcher that emits `filetree/change`
+ * so the client can refresh without polling. Nothing renders on the host
+ * display; this backend serves remote clients exactly like the browse backend
+ * of the directory-picker seam does.
+ * @module @deepseek-ai/dsh-host-file-tree-local
+ */
+
+import { opendir, stat } from 'node:fs/promises'
+import { join, relative, resolve, sep } from 'node:path'
+import type { Context } from '@deepseek-ai/cordis'
+import chokidar from 'chokidar'
+import z from '@deepseek-ai/schemastery'
+import { FileTree, FileTreeError } from '@deepseek-ai/dsh-host-file-tree'
+import type { FileTreeEntry, FileTreeListing, FileTreeGitStatus } from '@deepseek-ai/dsh-host-file-tree'
+import type { SubprocessHandle, SubprocessOutcome, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { aggregateDirStatus, findGitRoot, parseGitStatus } from './git.ts'
+import { asError, boundedInsert, fullyQualified, globToRegExp, messageOf, raceAbort } from './listing.ts'
+import type { ListingCandidate } from './listing.ts'
+
+/** Normalize a path to forward-slash separators, matching git's status output. */
+function toSlash(path: string): string {
+  return path.split(sep).join('/')
+}
+
+/* v8 ignore start -- a close failure of an abandoned handle has no consumer, and forcing one needs a filesystem torn down mid-request. */
+/** Swallow the close failure of a handle its caller already departed. */
+function swallowCloseFailure(): void {}
+/* v8 ignore stop */
+
+/** Validated plugin configuration. */
+export interface Config {
+  /** Complete-result bound of one listing level. */
+  maxEntries: number
+  /** Subprocess terminate-escalation grace period for the git-status spawn. */
+  graceMs: number
+  /** Byte cap on the complete `git status` stdout; overflow degrades to no coloring. */
+  gitStatusMaxBytes: number
+  /**
+   * Include `--ignored` in the git-status scan. Off by default: enumerating
+   * every ignored directory makes `git status` take minutes on a monorepo
+   * (measured >5 min versus 0.06 s without it here); opt in for small repos.
+   */
+  gitStatusIncludeIgnored: boolean
+  /**
+   * Deadline for one git-status read; on expiry the spawn is terminated and
+   * the listing degrades to no coloring instead of stalling forever.
+   */
+  gitStatusTimeoutMs: number
+  /** Watch via polling (for network mounts that deliver no native fs events). */
+  usePolling: boolean
+  /** Polling interval in milliseconds, used only when {@link Config.usePolling} is true. */
+  watchPollIntervalMs: number
+  /**
+   * Glob patterns the watcher skips (`*` within a segment, `**` across
+   * segments; a directory pattern ignores its whole subtree), tested against
+   * the slash-normalized absolute path. Defaults exclude `node_modules`,
+   * `.git`, and `.pnpm-store`: watching a dependency store costs one handle
+   * and event path per directory for nothing anyone wants a live signal for,
+   * and a content-addressed store dwarfs the source tree many times over.
+   */
+  watchIgnored: string[]
+  /**
+   * Maximum directory depth below each listed root to arm watchers on;
+   * undefined (default) arms every level.
+   */
+  watchDepth: number | undefined
+}
+
+/**
+ * The `ctx.fileTree` local implementation (one watcher per listed root, closed
+ * at disposal).
+ */
+export default class LocalFileTree extends FileTree {
+  static inject = ['subprocess']
+
+  static Config: z<Config> = z.object({
+    maxEntries: z.natural().min(1).default(1000),
+    graceMs: z.natural().default(5000),
+    gitStatusMaxBytes: z.natural().default(8 * 1024 * 1024),
+    gitStatusIncludeIgnored: z.boolean().default(false),
+    gitStatusTimeoutMs: z.natural().min(1).default(8000),
+    usePolling: z.boolean().default(false),
+    watchPollIntervalMs: z.natural().min(1).default(500),
+    watchIgnored: z.array(z.string()).default(['**/node_modules/**', '**/.git/**', '**/.pnpm-store/**']),
+    watchDepth: z.union([z.number().step(1).min(1), z.const(undefined)]),
+  })
+
+  /** Live watchers by absolute root; closed and dropped on plugin disposal. */
+  private readonly watchers = new Map<string, ReturnType<typeof chokidar.watch>>()
+
+  /** In-flight git-status reads by repo root; one spawn serves every concurrent lister of that repo. */
+  private readonly statusInflight = new Map<string, Promise<{
+    root: string
+    byRelPath: ReadonlyMap<string, FileTreeGitStatus>
+    byDirPath: ReadonlyMap<string, FileTreeGitStatus>
+  }>>()
+
+  /** Compiled watcher-ignore patterns (chokidar 5 matches strings by exact equality, not glob). */
+  private readonly ignoreMatchers: RegExp[]
+
+  /** True when the watcher should skip `path` (backslash-form Windows paths included). */
+  private isIgnored(path: string): boolean {
+    const normalized = path.replace(/\\/g, '/')
+    return this.ignoreMatchers.some(matcher => matcher.test(normalized))
+  }
+
+  constructor(ctx: Context, private readonly config: Config) {
+    super(ctx)
+    this.ignoreMatchers = config.watchIgnored.map(globToRegExp)
+    ctx.effect(() => () => {
+      for (const watcher of this.watchers.values()) void watcher.close()
+      this.watchers.clear()
+    }, 'file-tree watcher teardown')
+  }
+
+  /**
+   * List one directory level with per-file git status.
+   * @param path - absolute directory to list.
+   * @param signal - caller lifetime; abort stops the scan and rejects with the abort reason.
+   * @returns the level's children (name-sorted) and its truncation flag.
+   * @throws {FileTreeError} `tree-unreadable` when the path is not fully qualified or cannot be listed.
+   */
+  async listDir(path: string, signal?: AbortSignal): Promise<FileTreeListing> {
+    if (!fullyQualified(path)) {
+      throw new FileTreeError('tree-unreadable', path, `cannot list "${path}": not a fully qualified path`)
+    }
+    const target = resolve(path)
+    this.watchRoot(target)
+    const { window, evicted } = await this.streamLevel(target, signal)
+    const gitStatus = await this.readGitStatus(target, signal)
+    const entries: FileTreeEntry[] = []
+    let truncated = evicted
+    for (const candidate of window) {
+      signal?.throwIfAborted()
+      if (entries.length === this.config.maxEntries) {
+        truncated = true
+        break
+      }
+      const row = await this.resolveEntry(target, candidate, gitStatus, signal)
+      if (row === null) continue
+      entries.push(row)
+    }
+    return { path: target, entries, truncated }
+  }
+
+  /** Stream one level into a bounded name-sorted window, plus the eviction flag. */
+  private async streamLevel(
+    target: string,
+    signal: AbortSignal | undefined,
+  ): Promise<{ window: ListingCandidate[]; evicted: boolean }> {
+    const keep = this.config.maxEntries + 1
+    const window: ListingCandidate[] = []
+    let evicted = false
+    try {
+      const opening = opendir(target)
+      const level = await raceAbort(opening, signal).catch((error: unknown) => {
+        void opening.then(dir => dir.close().catch(swallowCloseFailure), () => {
+          // Already rejected: raceAbort surfaced or swallowed it.
+        })
+        throw error
+      })
+      try {
+        for (;;) {
+          const dirent = await raceAbort(level.read(), signal)
+          if (dirent === null) break
+          const candidate = {
+            name: dirent.name,
+            isDirectory: dirent.isDirectory(),
+            isSymbolicLink: dirent.isSymbolicLink(),
+          }
+          if (boundedInsert(window, candidate, keep)) evicted = true
+        }
+      } finally {
+        const closing = level.close()
+        /* v8 ignore next 3 -- an abort between open and close needs a stalled read; the abandoned-close arm has no observable outcome. */
+        if (signal?.aborted) {
+          closing.catch(swallowCloseFailure)
+        } else {
+          await closing
+        }
+      }
+    } catch (error: unknown) {
+      signal?.throwIfAborted()
+      throw new FileTreeError('tree-unreadable', target, `cannot list ${target}: ${messageOf(error)}`)
+    }
+    return { window, evicted }
+  }
+
+  /** Resolve one candidate into a tree row, probing symlinks and attaching git status. */
+  private async resolveEntry(
+    parent: string,
+    candidate: ListingCandidate,
+    gitStatus: {
+      root: string | undefined
+      byRelPath: ReadonlyMap<string, FileTreeGitStatus>
+      byDirPath: ReadonlyMap<string, FileTreeGitStatus>
+    },
+    signal: AbortSignal | undefined,
+  ): Promise<FileTreeEntry | null> {
+    const path = join(parent, candidate.name)
+    let isDirectory = candidate.isDirectory
+    if (!isDirectory && candidate.isSymbolicLink) {
+      try {
+        isDirectory = (await raceAbort(stat(path), signal)).isDirectory()
+      } catch {
+        /* v8 ignore next 2 -- an abort landing mid-probe needs a stalled stat; the settled broken-link arm is the ordinary skip. */
+        if (signal?.aborted) throw asError(signal.reason)
+        return null
+      }
+    }
+    const kind = isDirectory ? 'directory' : 'file'
+    const entry: FileTreeEntry = { name: candidate.name, path, kind, hidden: candidate.name.startsWith('.') }
+    if (gitStatus.root !== undefined) {
+      // Files report their own status; directories aggregate the highest-ranked
+      // status of anything below them, so a change deep in a tree still inks
+      // every enclosing directory row.
+      const status = (kind === 'file' ? gitStatus.byRelPath : gitStatus.byDirPath)
+        .get(toSlash(relative(gitStatus.root, path)))
+      if (status !== undefined) entry.gitStatus = status
+    }
+    return entry
+  }
+
+  /** Read the working-tree status of the repo containing `listedPath`, or empty maps. */
+  private async readGitStatus(
+    listedPath: string,
+    signal?: AbortSignal,
+  ): Promise<{
+    root: string | undefined
+    byRelPath: ReadonlyMap<string, FileTreeGitStatus>
+    byDirPath: ReadonlyMap<string, FileTreeGitStatus>
+  }> {
+    const root = await findGitRoot(listedPath)
+    if (root === undefined) return { root: undefined, byRelPath: new Map(), byDirPath: new Map() }
+    // One status scan per repo root: a change-event storm re-lists every
+    // expanded level at once, and without single-flight each re-list would
+    // stack its own multi-second spawn on the same repo.
+    const prior = this.statusInflight.get(root)
+    if (prior !== undefined) return prior
+    const run = this.runGitStatus(root, signal).finally(() => {
+      this.statusInflight.delete(root)
+    })
+    this.statusInflight.set(root, run)
+    return run
+  }
+
+  /** Run one git-status spawn, bounded by the configured deadline; any failure degrades to no coloring. */
+  private async runGitStatus(
+    root: string,
+    signal?: AbortSignal,
+  ): Promise<{
+    root: string
+    byRelPath: ReadonlyMap<string, FileTreeGitStatus>
+    byDirPath: ReadonlyMap<string, FileTreeGitStatus>
+  }> {
+    const argv = ['git', '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all']
+    if (this.config.gitStatusIncludeIgnored) argv.push('--ignored')
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(), this.config.gitStatusTimeoutMs)
+    // The deadline terminates the real child through the spawn signal and
+    // rejects this await directly; the caller's signal only passes through.
+    const lifetime = signal === undefined ? deadline.signal : AbortSignal.any([signal, deadline.signal])
+    try {
+      const handle: SubprocessHandle = this.ctx.subprocess.spawn({
+        argv,
+        cwd: root,
+        stdio: { stdin: 'ignore', stdout: { maxBytes: this.config.gitStatusMaxBytes }, stderr: { maxBytes: 4096 } },
+        graceMs: this.config.graceMs,
+        signal: lifetime,
+      } satisfies SubprocessSpawnSpec)
+      const outcome: SubprocessOutcome = await raceAbort(handle.done, deadline.signal)
+      // Exit 0 means a repository was scanned; anything else (not a repo, git
+      // missing) degrades to no coloring rather than failing the listing.
+      if (outcome.exitCode !== 0) return { root, byRelPath: new Map(), byDirPath: new Map() }
+      const stdout = handle.collected.stdout?.readFrom(0)
+      if (stdout === undefined || stdout.lossy) return { root, byRelPath: new Map(), byDirPath: new Map() }
+      const byRelPath = parseGitStatus(stdout.text)
+      return { root, byRelPath, byDirPath: aggregateDirStatus(byRelPath) }
+    } catch {
+      // Spawn failure, deadline, or caller abort: the listing still settles.
+      return { root, byRelPath: new Map(), byDirPath: new Map() }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** Start watching `root` once, relaying every filesystem event as a `filetree/change` emit. */
+  private watchRoot(root: string): void {
+    if (this.watchers.has(root)) return
+    const watcher = chokidar.watch(root, {
+      persistent: true,
+      ignoreInitial: true,
+      // Never descend symlinks/junctions: a pnpm workspace's node_modules are
+      // junctions into the virtual store, and following one means arming a
+      // watcher per store directory. The listing probes symlinks itself.
+      followSymlinks: false,
+      // Never arm watchers inside dependency stores or VCS internals: chokidar
+      // holds one handle and event path per directory, and a monorepo's
+      // node_modules alone dwarfs the source tree many times over. String
+      // globs are exact-equality no-ops in chokidar 5, so the compiled
+      // matchers above are passed as a function instead.
+      ignored: (path: string) => this.isIgnored(path),
+      ...(this.config.watchDepth === undefined ? {} : { depth: this.config.watchDepth }),
+      usePolling: this.config.usePolling,
+      interval: this.config.watchPollIntervalMs,
+      awaitWriteFinish: this.config.usePolling
+        ? false
+        : { stabilityThreshold: 200, pollInterval: 100 },
+    })
+    watcher.on('all', (_eventName, path) => {
+      this.ctx.emit('filetree/change', root, [path])
+    })
+    this.watchers.set(root, watcher)
+  }
+}
