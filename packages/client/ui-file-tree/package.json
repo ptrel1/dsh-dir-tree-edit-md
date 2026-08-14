@@ -2,6 +2,7 @@
   "name": "@deepseek-ai/dsh-client-ui-file-tree",
   "description": "Sidebar file tree: the workspace directory tree with git status, copy/open path, and multi-select",
   "version": "0.1.0-rc.5",
+  "author": "Gxuxiang",
   "publishConfig": {
     "access": "public"
   },

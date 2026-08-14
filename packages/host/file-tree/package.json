@@ -2,6 +2,7 @@
   "name": "@deepseek-ai/dsh-host-file-tree",
   "description": "Workspace file-tree listing seam (ctx.fileTree) for the DeepSeek Harness web GUI host",
   "version": "0.1.0-rc.5",
+  "author": "Gxuxiang",
   "publishConfig": {
     "access": "public"
   },

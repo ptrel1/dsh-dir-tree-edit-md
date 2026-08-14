@@ -2,6 +2,7 @@
   "name": "@deepseek-ai/dsh-file-selection",
   "description": "Logs the file-tree selected-file set as a durable session event and renders it into the system prompt",
   "version": "0.1.0-rc.5",
+  "author": "Gxuxiang",
   "publishConfig": {
     "access": "public"
   },

@@ -2,6 +2,7 @@
   "name": "@deepseek-ai/dsh-host-file-tree-local",
   "description": "Local-filesystem backend of the file-tree seam (level listing with git status + Chokidar change events)",
   "version": "0.1.0-rc.5",
+  "author": "Gxuxiang",
   "publishConfig": {
     "access": "public"
   },
