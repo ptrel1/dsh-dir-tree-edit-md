@@ -6,6 +6,8 @@ and multi-select files for the model to know about.
 
 [English](README.md) | [中文](README.zh.md)
 
+![File tree in the dsh web GUI](docs/screenshot.jpg)
+
 ## Features
 
 - **Lazy, bounded tree** — one `listDir` call per expanded level, capped at
@@ -48,7 +50,8 @@ integration/
 ├── wiring.patch            # dsh core wiring changes (RPCs, sidebar slot, events)
 └── new-files/              # new dsh core files the patch introduces
 docs/
-└── 2026-08-14-file-tree-capability-seam.md   # full design record (EN + ZH)
+├── screenshot.jpg                              # UI screenshot used in this README
+└── 2026-08-14-file-tree-capability-seam.md     # full design record (EN + ZH)
 ```
 
 The plugin packages use pnpm `workspace:^` dependencies and are meant to live

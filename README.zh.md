@@ -4,6 +4,8 @@ DeepSeek Harness（dsh）Web GUI 的**侧边栏文件树插件**：在懒加载�
 
 [English](README.md) | [中文](README.zh.md)
 
+![dsh Web GUI 中的文件树](docs/screenshot.jpg)
+
 ## 特性
 
 - **懒加载、有界列举** — 每个展开层级一次 `listDir` 调用，至多 `maxEntries`（默认 1000）条并带 `truncated` 标志。
@@ -31,7 +33,8 @@ integration/
 ├── wiring.patch            # dsh 核心接线改动（RPC、侧边栏槽位、事件转发）
 └── new-files/              # 补丁引入的 dsh 核心新文件
 docs/
-└── 2026-08-14-file-tree-capability-seam.md   # 完整设计记录（中英双语）
+├── screenshot.jpg                              # 本 README 所用的界面截图
+└── 2026-08-14-file-tree-capability-seam.md     # 完整设计记录（中英双语）
 ```
 
 插件包使用 pnpm `workspace:^` 依赖，设计为放在 **dsh 工作区内部**运行。`integration/` 携带插件所需的 dsh 核心接线（apiproxy 的 `filetree.list`/`filetree.select` RPC、`sidebar.filetree` 槽位与"工作区/文件"切换、`filetree/change` 事件转发白名单、web-app 挂载行）。
