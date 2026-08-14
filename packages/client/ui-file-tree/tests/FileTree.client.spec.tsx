@@ -90,6 +90,16 @@ function mount(overrides: Partial<FileTreeProps> = {}) {
   return { view, props, store, listDir, searchEntries, openPath, copyPath, selectFiles }
 }
 
+/** Expand the collapsed magnifier icon into the search box (the workspace search pattern). */
+function expandSearch(): void {
+  fireEvent.click(screen.getByRole('button', { name: '搜索文件' }))
+}
+
+/** The expanded search input; undefined while the control is collapsed. */
+function searchBox(): HTMLInputElement {
+  return screen.getByRole<HTMLInputElement>('searchbox')
+}
+
 describe('FileTree', () => {
   it('renders the empty state without a workspace cwd', () => {
     const view = render(<FileTree {...mount().props} useSessions={hook(sessionState(undefined))} />)
@@ -147,17 +157,26 @@ describe('FileTree', () => {
 })
 
 describe('FileTree search', () => {
-  it('renders the search box above the plain tree', async () => {
+  it('collapses search to an icon above the tree and expands it into the box', async () => {
     mount()
-    expect(screen.getByRole('searchbox')).toBeTruthy()
+    // Collapsed: the box stays mounted but hidden — the trigger announces the
+    // state and the input sits out of the tab order.
+    const trigger = screen.getByRole('button', { name: '搜索文件' })
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(searchBox().tabIndex).toBe(-1)
     await waitFor(() => { expect(screen.getByText('a.txt')).toBeTruthy() })
+
+    expandSearch()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(searchBox().tabIndex).toBe(0)
   })
 
   it('debounces a query and filters in place with synthesized ancestors', async () => {
     const { searchEntries } = mount({
       searchEntries: searchStub([{ name: 'c.txt', path: '/proj/src/deep/c.txt', kind: 'file', hidden: false }]),
     })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'c' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'c' } })
     // The plain tree hides immediately; the pending state shows while debouncing.
     expect(screen.getByText('加载中…')).toBeTruthy()
     expect(screen.queryByText('a.txt')).toBeNull()
@@ -175,16 +194,17 @@ describe('FileTree search', () => {
 
   it('collapses rapid keystrokes into one superseded request', async () => {
     const { searchEntries } = mount()
-    const box = screen.getByRole('searchbox')
-    fireEvent.change(box, { target: { value: 'a' } })
-    fireEvent.change(box, { target: { value: 'ab' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
+    fireEvent.change(searchBox(), { target: { value: 'ab' } })
     await waitFor(() => { expect(searchEntries).toHaveBeenCalledWith('/proj', 'ab', expect.anything()) })
     expect(searchEntries).toHaveBeenCalledTimes(1)
   })
 
   it('renders the no-matches notice', async () => {
     mount()
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'zzz' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'zzz' } })
     await waitFor(() => { expect(screen.getByText('未找到匹配项')).toBeTruthy() })
     expect(screen.queryByText('a.txt')).toBeNull()
   })
@@ -193,7 +213,8 @@ describe('FileTree search', () => {
     mount({
       searchEntries: searchStub([{ name: 'a.txt', path: '/proj/a.txt', kind: 'file', hidden: false }], true),
     })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'a' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
     await waitFor(() => { expect(screen.getByText('结果过多，已截断')).toBeTruthy() })
     expect(screen.getByText('a.txt')).toBeTruthy()
   })
@@ -202,16 +223,20 @@ describe('FileTree search', () => {
     mount({
       searchEntries: searchStub([{ name: 'a.txt', path: '/proj/a.txt', kind: 'file', hidden: false }]),
     })
-    const box = screen.getByRole('searchbox')
-    fireEvent.change(box, { target: { value: 'a' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
     await waitFor(() => { expect(screen.queryByText('b.txt')).toBeNull() })
 
-    fireEvent.keyDown(box, { key: 'Escape' })
+    fireEvent.keyDown(searchBox(), { key: 'Escape' })
+    // Escape clears the query and collapses the box back to the icon.
+    expect(screen.getByRole('button', { name: '搜索文件' }).getAttribute('aria-expanded')).toBe('false')
     await waitFor(() => { expect(screen.getByText('b.txt')).toBeTruthy() })
 
-    fireEvent.change(box, { target: { value: 'a' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
     await waitFor(() => { expect(screen.queryByText('b.txt')).toBeNull() })
     fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(screen.getByRole('button', { name: '搜索文件' }).getAttribute('aria-expanded')).toBe('false')
     await waitFor(() => { expect(screen.getByText('b.txt')).toBeTruthy() })
   })
 
@@ -219,7 +244,8 @@ describe('FileTree search', () => {
     mount({
       searchEntries: searchStub([{ name: 'a.txt', path: '/proj/a.txt', kind: 'file', hidden: false }]),
     })
-    const box = screen.getByRole('searchbox')
+    expandSearch()
+    const box = searchBox()
     fireEvent.change(box, { target: { value: 'a' } })
     await waitFor(() => { expect(screen.queryByText('b.txt')).toBeNull() })
 
@@ -230,6 +256,7 @@ describe('FileTree search', () => {
     fireEvent.compositionEnd(box)
     fireEvent.keyDown(box, { key: 'Escape' })
     await waitFor(() => { expect(screen.getByText('b.txt')).toBeTruthy() })
+    expect(screen.getByRole('button', { name: '搜索文件' }).getAttribute('aria-expanded')).toBe('false')
   })
 
   it('reveals a matched directory in the plain tree on click', async () => {
@@ -239,14 +266,16 @@ describe('FileTree search', () => {
         { name: 'inner.txt', path: '/proj/dir/inner.txt', kind: 'file', hidden: false, gitStatus: 'added' },
       ]),
     })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'i' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'i' } })
     await waitFor(() => { expect(screen.getByText('inner.txt')).toBeTruthy() })
     // One merged 'dir' row (real match hosting its deeper match as a child).
     expect(screen.getAllByText('dir')).toHaveLength(1)
 
     fireEvent.click(screen.getByText('dir'))
     await waitFor(() => { expect(listDir).toHaveBeenCalledWith('/proj/dir', expect.anything()) })
-    expect(screen.getByRole<HTMLInputElement>('searchbox').value).toBe('')
+    // The reveal clears the query and collapses the box back to the icon.
+    expect(screen.getByRole('button', { name: '搜索文件' }).getAttribute('aria-expanded')).toBe('false')
     expect(store.getSnapshot().expanded).toEqual(['/proj/dir'])
     // The plain tree now hosts the revealed directory with its real child.
     await waitFor(() => { expect(screen.getByText('inner.txt')).toBeTruthy() })
@@ -256,7 +285,8 @@ describe('FileTree search', () => {
     const { selectFiles } = mount({
       searchEntries: searchStub([{ name: 'a.txt', path: '/proj/a.txt', kind: 'file', hidden: false, gitStatus: 'modified' }]),
     })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'a' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
     await waitFor(() => { expect(screen.getByText('a.txt')).toBeTruthy() })
     fireEvent.click(screen.getByText('a.txt'))
     expect(selectFiles).toHaveBeenCalledWith(sid('s1'), ['/proj/a.txt'])
@@ -266,7 +296,8 @@ describe('FileTree search', () => {
     const { view, props, searchEntries } = mount({
       searchEntries: searchStub([{ name: 'a.txt', path: '/proj/a.txt', kind: 'file', hidden: false }]),
     })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'a' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
     await waitFor(() => { expect(searchEntries).toHaveBeenCalledTimes(1) })
 
     view.rerender(<FileTree {...props} useFileTreeChange={hook({ revision: 1 })} />)
@@ -278,12 +309,13 @@ describe('FileTree search', () => {
     const { view, props, searchEntries } = mount({
       searchEntries: searchStub([{ name: 'a.txt', path: '/proj/a.txt', kind: 'file', hidden: false }]),
     })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'a' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
     await waitFor(() => { expect(searchEntries).toHaveBeenCalledWith('/proj', 'a', expect.anything()) })
 
     view.rerender(<FileTree {...props} useSessions={hook(sessionState('/other'))} />)
     await waitFor(() => { expect(searchEntries).toHaveBeenLastCalledWith('/other', 'a', expect.anything()) })
-    expect(screen.getByRole<HTMLInputElement>('searchbox').value).toBe('a')
+    expect(searchBox().value).toBe('a')
   })
 
   it('renders a retry affordance when the search fails and recovers on click', async () => {
@@ -294,7 +326,8 @@ describe('FileTree search', () => {
         return { path: root, matches: [{ name: 'a.txt', path: '/proj/a.txt', kind: 'file', hidden: false }], truncated: false }
       }),
     })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'a' } })
+    expandSearch()
+    fireEvent.change(searchBox(), { target: { value: 'a' } })
     const retry = await waitFor(() => screen.getByText('搜索失败，点击重试'))
     fireEvent.click(retry)
     await waitFor(() => { expect(screen.getByText('a.txt')).toBeTruthy() })

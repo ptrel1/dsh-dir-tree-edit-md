@@ -2,15 +2,16 @@
  * The sidebar file-tree occupant (package-internal; the `./client` surface
  * exposes only the Loader exports). Reads the current session's workspace root
  * and renders one lazy directory level per expansion; a `filetree/change`
- * signal re-lists the expanded view without polling. A name-search box above
- * the tree filters in place: the tree shape survives, matches stay put with
- * their real ancestors and synthesized connecting levels, and clearing the
- * query restores the plain tree.
+ * signal re-lists the expanded view without polling. A name-search control
+ * above the tree (the workspace browser's pattern: a collapsed 28px magnifier
+ * icon that expands into the full-width box) filters in place: the tree shape
+ * survives, matches stay put with their real ancestors and synthesized
+ * connecting levels, and clearing the query restores the plain tree.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, IconSearchOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconSearchOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeSearchResult, SessionId,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -147,6 +148,31 @@ export function FileTree({
   const composingRef = useRef(false)
   /** The single live search controller; a newer query aborts and supersedes the prior run. */
   const searchPending = useRef<AbortController | undefined>(undefined)
+  // Collapsed shows the 28px magnifier icon (the workspace search pattern);
+  // Escape, the clear button, a directory reveal, and clicking away from an
+  // empty box collapse it — a non-empty query keeps the box open.
+  const [searchExpanded, setSearchExpanded] = useState(false)
+  const searchRoot = useRef<HTMLDivElement | null>(null)
+  const searchInput = useRef<HTMLInputElement | null>(null)
+
+  // Land the caret in the box whenever the collapsed icon expands it.
+  useEffect(() => {
+    if (searchExpanded) searchInput.current?.focus({ preventScroll: true })
+  }, [searchExpanded])
+
+  // The workspace search's dismiss gesture: clicking away from an empty box
+  // collapses it back to the icon; a non-empty query keeps the filter up.
+  useEffect(() => {
+    if (!searchExpanded) return
+    const onClick = (event: MouseEvent): void => {
+      if (!(event.target instanceof Node) || searchRoot.current?.contains(event.target) === true) return
+      searchInput.current?.blur()
+      if (normalizedQuery !== '') return
+      setSearchExpanded(false)
+    }
+    document.addEventListener('click', onClick)
+    return () => { document.removeEventListener('click', onClick) }
+  }, [normalizedQuery, searchExpanded])
 
   const runSearch = useCallback((q: string) => {
     if (cwd === undefined) return
@@ -248,6 +274,7 @@ export function FileTree({
   // in the plain tree: expand every ancestor level and load the missing ones.
   const revealDir = (node: FilterTreeNode): void => {
     setQuery('')
+    setSearchExpanded(false)
     const chain: FilterTreeNode[] = []
     for (let cursor: FilterTreeNode | undefined = node; cursor !== undefined && cursor.path !== cwd; cursor = cursor.parent) {
       chain.push(cursor)
@@ -395,26 +422,50 @@ export function FileTree({
 
   return (
     <div className={clsx(css.root, css.wide)}>
-      <div className={css.searchBar}>
-        <div className={css.searchBox}>
-          <Input
-            className={clsx(css.searchInput)}
-            icon={<IconSearchOutline16 />}
+      <div ref={searchRoot} className={css.searchBar}>
+        {/* The workspace-search pattern: the box stays mounted and only the CSS
+            width/opacity transition expands it; the icon is always the trigger. */}
+        <div className={clsx(css.search, searchExpanded && css.searchExpanded)}>
+          <Tooltip label={t('search.aria')} side="bottom" delayMs={500} disabled={searchExpanded}>
+            <button
+              type="button"
+              className={css.searchButton}
+              aria-label={t('search.aria')}
+              aria-expanded={searchExpanded}
+              onClick={() => { setSearchExpanded(true) }}
+            >
+              <IconSearchOutline16 size={searchExpanded ? 11 : 14} />
+            </button>
+          </Tooltip>
+          <input
+            ref={searchInput}
+            className={css.searchInput}
             type="text"
             role="searchbox"
             aria-label={t('search.aria')}
             placeholder={t('search.placeholder')}
             maxLength={SEARCH_QUERY_MAX_CODE_UNITS}
+            tabIndex={searchExpanded ? 0 : -1}
             value={query}
             onChange={(e) => { setQuery(sanitizeSearchQuery(e.target.value)) }}
             onCompositionStart={() => { composingRef.current = true }}
             onCompositionEnd={() => { composingRef.current = false }}
             onKeyDown={(e) => {
-              if (e.key === 'Escape' && !composingRef.current) setQuery('')
+              if (e.key !== 'Escape' || composingRef.current) return
+              setQuery('')
+              setSearchExpanded(false)
             }}
           />
-          {query !== '' && (
-            <button type="button" className={css.clearButton} aria-label={t('search.clear')} onClick={() => { setQuery('') }}>
+          {searchExpanded && (
+            <button
+              type="button"
+              className={css.clearButton}
+              aria-label={t('search.clear')}
+              onClick={() => {
+                setQuery('')
+                setSearchExpanded(false)
+              }}
+            >
               <IconCloseFill14 />
             </button>
           )}

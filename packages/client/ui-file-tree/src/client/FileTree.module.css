@@ -8,31 +8,98 @@
   overflow: hidden;
 }
 
+/* Search row: a collapsed 28px magnifier that expands into the full-width
+   bordered input — the workspace browser's search pattern. The box stays
+   mounted and only the CSS width/opacity transition expands it. */
 .searchBar {
   flex: none;
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 36px;
+  padding: 0 12px;
+  margin-bottom: 4px;
 }
 
-.searchBox {
-  position: relative;
+.search {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  transition:
+    width 180ms var(--ds-ease-in-out, ease),
+    border-color 180ms var(--ds-ease-in-out, ease);
 }
 
-/* The Input atom's wrap span: full width, room for the overlay clear button. */
-.searchInput {
+.searchExpanded {
   width: 100%;
-  padding-right: 28px;
+  height: 30px;
+  padding: 0 4px 0 0;
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-caption);
 }
 
-.clearButton {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
+.searchButton {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.searchButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.searchExpanded .searchButton:hover {
+  background: transparent;
+}
+
+.searchInput {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  margin-left: -2px;
+  border: none;
+  outline: none;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  transition: opacity 120ms var(--ds-ease-in-out, ease);
+}
+
+.searchExpanded .searchInput {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.searchInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.clearButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
   border-radius: 50%;
