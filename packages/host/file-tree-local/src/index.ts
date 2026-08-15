@@ -8,19 +8,20 @@
  * @module @deepseek-ai/dsh-host-file-tree-local
  */
 
-import { opendir, stat } from 'node:fs/promises'
+import { open, opendir, stat } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import chokidar from 'chokidar'
 import z from '@deepseek-ai/schemastery'
 import { FileTree, FileTreeError } from '@deepseek-ai/dsh-host-file-tree'
-import type { FileTreeEntry, FileTreeListing, FileTreeGitStatus, FileTreeSearchResult } from '@deepseek-ai/dsh-host-file-tree'
+import type { FileTreeEntry, FileTreeListing, FileTreeGitStatus, FileTreeReadResult, FileTreeSearchResult } from '@deepseek-ai/dsh-host-file-tree'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { aggregateDirStatus, findGitRoot, parseGitStatus } from './git.ts'
 import {
   asError, boundedInsert, fullyQualified, globToRegExp, messageOf, nameMatches, pathIgnored, raceAbort,
 } from './listing.ts'
 import type { ListingCandidate } from './listing.ts'
+import { decodeText, langFromPath, sniffBinary } from './read.ts'
 
 /** Normalize a path to forward-slash separators, matching git's status output. */
 function toSlash(path: string): string {
@@ -73,6 +74,8 @@ export interface Config {
   searchMaxMatches: number
   /** Deadline for one name search; on expiry the search settles with the matches collected so far. */
   searchTimeoutMs: number
+  /** Byte cap on one text-file read for the editor surface; larger files return a `truncated` prefix. */
+  readMaxBytes: number
 }
 
 /**
@@ -94,6 +97,7 @@ export default class LocalFileTree extends FileTree {
     watchDepth: z.union([z.number().step(1).min(1), z.const(undefined)]),
     searchMaxMatches: z.natural().min(1).default(200),
     searchTimeoutMs: z.natural().min(1).default(10_000),
+    readMaxBytes: z.natural().min(1).default(512 * 1024),
   })
 
   /** Live watchers by absolute root; closed and dropped on plugin disposal. */
@@ -197,6 +201,64 @@ export default class LocalFileTree extends FileTree {
       clearTimeout(timer)
     }
     return { path: target, matches, truncated }
+  }
+
+  /**
+   * Read one text file for the editor surface (the file-tree edit-marker panel).
+   * @param path - absolute file to read.
+   * @param signal - caller lifetime; abort stops the read and rejects with the abort reason.
+   * @returns the decoded prefix and a syntax-highlighting language hint.
+   * @throws {FileTreeError} `not-a-text-file` for binary content, `tree-unreadable` otherwise.
+   */
+  async readFile(path: string, signal?: AbortSignal): Promise<FileTreeReadResult> {
+    if (!fullyQualified(path)) {
+      throw new FileTreeError('tree-unreadable', path, `cannot read "${path}": not a fully qualified path`)
+    }
+    const target = resolve(path)
+    let handle: Awaited<ReturnType<typeof open>>
+    try {
+      handle = await raceAbort(open(target, 'r'), signal)
+    } catch (error: unknown) {
+      signal?.throwIfAborted()
+      throw new FileTreeError('tree-unreadable', target, `cannot read ${target}: ${messageOf(error)}`)
+    }
+    try {
+      const info = await raceAbort(handle.stat(), signal)
+      if (info.isDirectory()) {
+        throw new FileTreeError('tree-unreadable', target, `cannot read ${target}: it is a directory`)
+      }
+      // A bounded prefix: the editor renders this much, and `truncated` says the
+      // file continues. Reading a fixed cap (not the whole file) keeps a huge
+      // file from consuming the backend's memory.
+      const length = Math.min(info.size, this.config.readMaxBytes)
+      const buffer = Buffer.allocUnsafe(length)
+      let received = 0
+      while (received < length) {
+        const { bytesRead } = await raceAbort(handle.read(buffer, received, length - received, received), signal)
+        if (bytesRead === 0) break
+        received += bytesRead
+      }
+      const prefix = received < buffer.length ? buffer.subarray(0, received) : buffer
+      if (sniffBinary(prefix)) {
+        throw new FileTreeError('not-a-text-file', target, `cannot read ${target}: binary content`)
+      }
+      const language = langFromPath(target)
+      return {
+        path: target,
+        text: decodeText(prefix),
+        truncated: info.size > this.config.readMaxBytes,
+        ...(language === undefined ? {} : { language }),
+      }
+    } catch (error: unknown) {
+      if (error instanceof FileTreeError) throw error
+      signal?.throwIfAborted()
+      throw new FileTreeError('tree-unreadable', target, `cannot read ${target}: ${messageOf(error)}`)
+    } finally {
+      const closing = handle.close()
+      /* v8 ignore next 3 -- an abort between open and close needs a stalled read; the abandoned-close arm has no observable outcome. */
+      if (signal?.aborted) closing.catch(swallowCloseFailure)
+      else await closing
+    }
   }
 
   /**

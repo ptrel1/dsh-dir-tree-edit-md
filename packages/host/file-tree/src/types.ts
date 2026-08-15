@@ -50,8 +50,20 @@ export interface FileTreeSearchResult {
   truncated: boolean
 }
 
+/** One text file read for the editor surface. */
+export interface FileTreeReadResult {
+  /** Absolute path of the read file. */
+  path: string
+  /** Decoded UTF-8 text (a prefix when `truncated`). */
+  text: string
+  /** True when the backend cut `text` at its complete-read bound: the file has more content than reported. */
+  truncated: boolean
+  /** Syntax-highlighting hint (a shiki-compatible language id) derived from the path, or absent for plain text. */
+  language?: string
+}
+
 /** Closed failure vocabulary of the listing primitive (mirrored onto the wire by consumers). */
-export type FileTreeErrorCode = 'tree-unreadable'
+export type FileTreeErrorCode = 'tree-unreadable' | 'not-a-text-file'
 
 declare module '@deepseek-ai/cordis' {
   interface Events {

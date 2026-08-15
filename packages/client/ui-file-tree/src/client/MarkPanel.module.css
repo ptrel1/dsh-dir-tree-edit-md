@@ -1,0 +1,400 @@
+/* Right-side edit-marker dock occupant. The layout frame owns the column's
+   width and border; this file styles the occupant's two shapes: the collapsed
+   vertical tag rail (one filename chip per opened file) and the expanded
+   editor (tag strip + highlighted body + annotation box). Semantic state
+   tokens only (no literal colors). */
+
+/* Expanded shape: a static flex column filling the dock track. No portal,
+   no fixed positioning — opening the panel pushes the center column. */
+.panel {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* Collapsed shape: one vertical filename chip per opened file. The rail is
+   itself the column's full height; the chips stack top to bottom. */
+.rail {
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* Shared chip: inline flex, pill outline, full-width in the rail. */
+.tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Rail chips stretch across the narrow column and center their label. The
+   relative position anchors the close ✕ to the chip's top-right corner. */
+.railTag {
+  position: relative;
+  width: 100%;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 6px;
+  border-radius: 10px;
+}
+
+.tagName {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.tagCount {
+  flex: none;
+  min-width: 16px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-align: center;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.tagPending {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+/* AI-completed markers: the tag text goes bright green (the -secondary alias
+   resolves to the lighter green-400) so finished work stands out from the
+   pending amber tags. */
+.tagDone {
+  background: var(--dsw-alias-state-success-tertiary);
+  color: var(--dsw-alias-state-success-secondary);
+}
+
+/* The file currently open in the editor: emphasized chip in the tag strip. */
+.tagCurrent {
+  outline: 1px solid var(--dsw-alias-label-secondary);
+  outline-offset: -1px;
+}
+
+/* The tag's close ✕ (aria 关闭文件): a small hover-revealed circular button
+   nested inside the tag pill at its trailing edge. On the rail chip it is
+   pulled to the top-right corner on a neutral backdrop so it reads over the
+   status tint. */
+.tagClose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.tagClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.railTag .tagClose {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* Tag strip above the expanded editor: one horizontal scrolling row. */
+.tagRail {
+  flex: none;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+/* Editor: header + highlighted, selectable lines + marker list. */
+.editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 8px;
+}
+
+.editorHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.editorTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.closeButton,
+.deleteButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.closeButton:hover,
+.deleteButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editorError {
+  padding: 16px 8px;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 13px;
+}
+
+.lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.line {
+  display: flex;
+  min-width: max-content;
+}
+
+.gutter {
+  flex: none;
+  width: 44px;
+  padding-right: 10px;
+  box-sizing: border-box;
+  text-align: right;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.content {
+  flex: 1;
+  white-space: pre;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Marked-text highlight in the editor. The dark-mode -tertiary shades are the
+   near-black -900 tones; a translucent primary tint stays readable against the
+   panel and reads clearly brighter than the file's own dark background. */
+.markerPending {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 30%, transparent);
+  color: inherit;
+}
+
+.markerDone {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 30%, transparent);
+  color: inherit;
+}
+
+/* The marker whose list row was clicked: a brand ring around the marked text
+   (toggles off on a second click of the same row). */
+.markerHighlighted {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+.truncated {
+  flex: none;
+  padding: 4px 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.markerList {
+  flex: none;
+  max-height: 30%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 6px;
+}
+
+.markerItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.markerItem:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The marker-list row whose marker is located in the editor. */
+.markerItemActive {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+
+.markerDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.markerDot.markerPending {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.markerDot.markerDone {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.markerItemText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+/* Annotation drawer: the "what should the model do here" prompt after a
+   drag-select. Rendered in-flow at the bottom of the panel (negative margins
+   bleed it flush to the panel edges) so it pushes the editor up instead of
+   covering the file content the way an overlay popup would. */
+.annotationBox {
+  flex: none;
+  margin: 0 -12px -10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: annotationDrawerIn 0.18s ease;
+}
+
+@keyframes annotationDrawerIn {
+  from { transform: translateY(6px); opacity: 0 }
+  to { transform: translateY(0); opacity: 1 }
+}
+
+.annotationSnippet {
+  max-height: 60px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.annotationInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  resize: vertical;
+}
+
+.annotationInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-label-secondary);
+}
+
+.annotationActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cancelButton {
+  padding: 5px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cancelButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.markButton {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.markButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -24,6 +24,7 @@ function config(overrides: Partial<Config> = {}): Config {
     watchDepth: undefined,
     searchMaxMatches: 200,
     searchTimeoutMs: 10_000,
+    readMaxBytes: 512 * 1024,
     ...overrides,
   }
 }

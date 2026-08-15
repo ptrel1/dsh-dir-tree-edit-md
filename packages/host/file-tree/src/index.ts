@@ -12,7 +12,7 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { FileTreeErrorCode, FileTreeListing, FileTreeSearchResult } from './types.ts'
+import type { FileTreeErrorCode, FileTreeListing, FileTreeReadResult, FileTreeSearchResult } from './types.ts'
 
 export type {
   FileTreeEntry,
@@ -20,6 +20,7 @@ export type {
   FileTreeErrorCode,
   FileTreeGitStatus,
   FileTreeListing,
+  FileTreeReadResult,
   FileTreeSearchResult,
 } from './types.ts'
 
@@ -71,6 +72,17 @@ export abstract class FileTree extends Service {
    * @throws {FileTreeError} `tree-unreadable` when the root is not fully qualified or cannot be searched.
    */
   abstract search(root: string, query: string, signal?: AbortSignal): Promise<FileTreeSearchResult>
+
+  /**
+   * Read one text file for the editor surface (the file-tree edit-marker panel).
+   * Backends bound the read to a prefix and report `truncated`; a binary or
+   * undecodable file fails instead of returning mojibake.
+   * @param path - absolute file to read.
+   * @param signal - caller lifetime; abort stops the read and rejects with the abort reason.
+   * @returns the decoded text prefix and a syntax-highlighting language hint.
+   * @throws {FileTreeError} `not-a-text-file` when the content is binary, `tree-unreadable` when the file cannot be read.
+   */
+  abstract readFile(path: string, signal?: AbortSignal): Promise<FileTreeReadResult>
 }
 
 export default FileTree

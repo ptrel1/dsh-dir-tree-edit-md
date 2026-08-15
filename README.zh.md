@@ -13,6 +13,8 @@ DeepSeek Harness（dsh）Web GUI 的**侧边栏文件树插件**：在懒加载�
 - **选择对模型可见** — 多选路径落为持久化的 `file/selection` 会话事件，渲染进模型上下文，并可从会话日志回放重建。
 - **免轮询实时刷新** — Chokidar 监听器发出 `filetree/change`，经 dsh 的 remote-event 白名单转发到客户端；客户端中止被取代的请求并重列已展开视图。
 - **树内文件搜索** — 树上方搜索框按文件名（忽略大小写子串，文件与目录都算）过滤，同时保留树形：匹配项沿合成的祖先链自动展开显示，匹配行保留 git 着色（合成的祖先行不着色）。清空查询恢复普通树；点击匹配目录清除过滤并在普通树中定位展开该目录。
+- **右键菜单** — 右键任意行弹出菜单：`默认程序打开`、`复制文件/文件夹路径`；对文本文件还有 `文件编辑标记`。
+- **文件编辑标记** — 右侧边栏编辑器（按语言 shiki 语法高亮）里划选文本，弹出说明框告诉模型要对这段文字做什么；可标记多个段落、多个文件，标记可删除。每个已标记文件在右侧折叠成一个 tag（挂起为琥珀色，完成转绿）。标记以持久化 `file/annotation` 会话事件落日志并渲染进模型上下文；当模型的 `write`/`edit` 工具改动该文件时，对应标记自动转为 `done`。
 - **为大仓库加固**（在真实 monorepo 上实测）：
   - git-status 扫描按仓库根单飞、按截止时间终止（`gitStatusTimeoutMs`，默认 8 秒）；到期时列举无着色地落定而非卡死。
   - `--ignored` 默认关闭（`gitStatusIncludeIgnored` 可选开启）：实测开启后一次扫描 >5 分钟，关闭仅 0.06 秒。
@@ -31,8 +33,8 @@ packages/
 └── context/
     └── file-selection/     # 选择 → 持久会话事件 → 模型上下文
 integration/
-├── wiring.patch            # 就地修改 39 个 dsh 核心既有文件
-└── new-files/              # 2 个全新的 dsh 核心文件（复制到 dsh 根目录）
+├── wiring.patch            # dsh 核心接线改动（RPC、侧边栏槽位、事件转发）
+└── new-files/              # 补丁引入的 dsh 核心新文件
 docs/
 ├── screenshot.jpg                              # 本 README 所用的界面截图
 └── 2026-08-14-file-tree-capability-seam.md     # 完整设计记录（中英双语）
@@ -60,33 +62,7 @@ docs/
    cp -r integration/new-files/* .
    ```
 
-   `wiring.patch` **就地修改 39 个 dsh 核心既有文件**，不会创建新文件。按用途分组：
-
-   - `packages/host/apiproxy/*` —— `filetree.list` / `filetree.select` /
-     `filetree.search` 三个 RPC 的处理器、fetch 客户端、rpc-map、schema
-     及其测试
-   - `packages/client/connection/*`、`packages/client/runtime/*`、
-     `packages/api/remotes/*`、`packages/test-support/client-runtime/*` ——
-     工作区契约（`listDir`、`searchEntries`、选中集）、服务实现与测试替身
-   - `packages/client/ui-sidebar/*` —— `sidebar.filetree` 槽位、"工作区/文件"
-     标签切换与本地化文案
-   - `packages/core/session/src/known-event-types.ts` —— 把 `filetree/change`
-     加入事件转发白名单
-   - `packages/bundle/web-app/*` —— 新包的 web-app 挂载行
-   - `tsconfig.base.json` / `tsconfig.client.json` / `tsconfig.host.json` ——
-     workspace 引用与 host-boot 注册
-
-   `integration/new-files/` 放的是 dsh 核心**原本不存在、补丁无法表达**的两个
-   新文件（apiproxy 的 filetree API 面及其 zod schema）。在仓库根目录执行
-   `cp -r integration/new-files/* .` 后，它们落在最终路径：
-
-   ```
-   packages/host/apiproxy/src/api/filetree.ts
-   packages/host/apiproxy/src/api/filetree.schema.ts
-   ```
-
-   `wiring.patch` 是相对本插件开发时那份 dsh 检出的核心改动快照；在更新的
-   dsh 上需手动解决冲突。
+   `wiring.patch` 是相对本插件开发时那份 dsh 检出的核心改动快照；在更新的 dsh 上需手动解决冲突。
 
 3. **安装**（更新 lockfile 并链接新 workspace 包）：
 
@@ -115,6 +91,7 @@ docs/
 | `watchDepth` | `undefined` | 挂载监听器的最大目录深度；undefined = 全深度 |
 | `searchMaxMatches` | `200` | 单次搜索的匹配上限；超出置 `truncated` |
 | `searchTimeoutMs` | `10000` | 单次搜索截止时间；到期以已收集的匹配落定（`truncated`） |
+| `readMaxBytes` | `524288` | 编辑标记面板单次读文件的上限；更大的文件只返回带 `truncated` 的前缀 |
 
 ## 设计裁定（摘要）
 

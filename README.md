@@ -29,6 +29,15 @@ for the model to know about.
   and matched rows keep their git ink (synthesized ancestors don't). Clearing
   the query restores the plain tree; clicking a matched directory clears the
   filter and reveals that directory in the plain tree.
+- **Right-click menu** — right-click any row for `Open with default app`,
+  `Copy file/folder path`, and — for text files — `Edit marker`.
+- **File edit markers** — a right-side editor (shiki syntax highlighting by
+  language) lets you drag-select text and describe, in a pop-up box, what the
+  model should do to that passage. Mark multiple passages and multiple files;
+  markers are deletable, each marked file collapses to a right-side tag (amber
+  while pending, green once done). Markers persist as a `file/annotation`
+  session event and render into the model context; when the model's `write` or
+  `edit` tool touches a marked file, its markers flip to `done`.
 - **Hardened for big repos** (measured on a real monorepo):
   - git-status scans are single-flighted per repo root and deadline-bounded
     (`gitStatusTimeoutMs`, default 8 s); on expiry the listing settles without
@@ -54,8 +63,8 @@ packages/
 └── context/
     └── file-selection/     # selection → durable session event → model context
 integration/
-├── wiring.patch            # patches 39 existing dsh-core files in place
-└── new-files/              # 2 brand-new dsh-core files (copied to the dsh root)
+├── wiring.patch            # dsh core wiring changes (RPCs, sidebar slot, events)
+└── new-files/              # new dsh core files the patch introduces
 docs/
 ├── screenshot.jpg                              # UI screenshot used in this README
 └── 2026-08-14-file-tree-capability-seam.md     # full design record (EN + ZH)
@@ -86,34 +95,6 @@ pnpm.
    ```bash
    git apply integration/wiring.patch
    cp -r integration/new-files/* .
-   ```
-
-   `wiring.patch` **modifies 39 existing dsh-core files in place** — it never
-   creates new ones. Grouped by purpose:
-
-   - `packages/host/apiproxy/*` — the `filetree.list` / `filetree.select` /
-     `filetree.search` RPC handlers, fetch client, rpc-map, schemas, and their
-     tests
-   - `packages/client/connection/*`, `packages/client/runtime/*`,
-     `packages/api/remotes/*`, `packages/test-support/client-runtime/*` — the
-     workspace contract (`listDir`, `searchEntries`, selection), the service
-     implementation, and the test doubles
-   - `packages/client/ui-sidebar/*` — the `sidebar.filetree` slot, the
-     Workspace/Files tab switch, and its locales
-   - `packages/core/session/src/known-event-types.ts` — adds `filetree/change`
-     to the forwarded-event allowlist
-   - `packages/bundle/web-app/*` — the web-app mount rows for the new packages
-   - `tsconfig.base.json` / `tsconfig.client.json` / `tsconfig.host.json` — the
-     workspace references and host-boot registrations
-
-   `integration/new-files/` holds the **two files dsh core doesn't have at
-   all** — the apiproxy filetree API surface and its zod schemas — which a
-   patch cannot express. `cp -r integration/new-files/* .` from the repo root
-   drops them at their final paths:
-
-   ```
-   packages/host/apiproxy/src/api/filetree.ts
-   packages/host/apiproxy/src/api/filetree.schema.ts
    ```
 
    `wiring.patch` is a snapshot of dsh-core changes against the checkout this
@@ -148,6 +129,7 @@ config schema:
 | `watchDepth` | `undefined` | max directory depth to arm watchers on; undefined = all |
 | `searchMaxMatches` | `200` | match bound of one search; overflow sets `truncated` |
 | `searchTimeoutMs` | `10000` | deadline per search; expiry settles with the matches collected (`truncated`) |
+| `readMaxBytes` | `524288` | byte cap of one editor read; larger files return a `truncated` prefix |
 
 ## Design rulings (summary)
 

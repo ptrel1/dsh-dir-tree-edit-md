@@ -11,14 +11,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, IconSearchOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconSearchOutline16, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeSearchResult, SessionId,
+  FileAnnotation, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeReadResult, FileTreeSearchResult, SessionId,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   HostObservable, PropsLocale, PropsRuntime, PropsStore, SnapshotSelectorHook,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type { createFileTreeStore } from './store.ts'
+import { flatAnnotations } from './store.ts'
+import { openEditor as openEditorAction } from './editor.ts'
+import { isTextFile } from './marks.ts'
 import type { FilterTreeNode } from './search.ts'
 import { buildFilteredTree } from './search.ts'
 import css from './FileTree.module.css'
@@ -35,6 +38,12 @@ export interface FileTreeInjected {
   copyPath: (path: string) => void
   /** Record the session's selected-file set (fire-and-forget). */
   selectFiles: (sessionId: SessionId, files: string[]) => void
+  /** Read one text file for the edit-marker editor. */
+  readFile: (path: string) => Promise<FileTreeReadResult>
+  /** Record the session's complete edit-marker set (fire-and-forget). */
+  annotateFiles: (sessionId: SessionId, annotations: FileAnnotation[]) => void
+  /** Read the session's latest edit-marker set (with completion statuses). */
+  readAnnotations: (sessionId: SessionId) => Promise<FileAnnotation[]>
 }
 
 /** Bound hooks the renderer derives from the injected `hooks` compartment. */
@@ -89,7 +98,7 @@ function sanitizeSearchQuery(value: string): string {
  * @returns the tree element.
  */
 export function FileTree({
-  useSessions, useStore, actions, listDir, searchEntries, openPath, copyPath, selectFiles, useFileTreeChange, t,
+  useSessions, useStore, actions, listDir, searchEntries, openPath, copyPath, selectFiles, readFile, annotateFiles, readAnnotations, useFileTreeChange, t,
 }: FileTreeProps) {
   const list = useSessions(s => s)
   const currentId = list.current
@@ -99,9 +108,13 @@ export function FileTree({
   const selection = useStore(s => s.selection)
   const failed = useStore(s => s.failed)
   const search = useStore(s => s.search)
+  const annotations = useStore(s => s.annotations)
   const change = useFileTreeChange(s => s.revision)
 
   const [busy, setBusy] = useState<Busy>(new Set())
+
+  /** The right-click context menu: mouse position + the target row. */
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string; name: string; kind: FileTreeEntryKind } | null>(null)
 
   /** Live controllers per listed path; a re-list aborts and supersedes the prior request. */
   const pending = useRef(new Map<string, AbortController>())
@@ -226,6 +239,9 @@ export function FileTree({
     actions.clearSelection()
     actions.clearExpanded()
     actions.clearFailed()
+    actions.clearAnnotations()
+    actions.clearMarked()
+    actions.setEditor(null)
     if (cwd !== undefined) load(cwd)
   }, [cwd, actions, load])
 
@@ -247,11 +263,33 @@ export function FileTree({
     if (currentId !== undefined) selectFiles(currentId, selection)
   }, [currentId, selection, selectFiles])
 
+  // Sync the edit-marker set to the host on every change (empty clears it).
+  useEffect(() => {
+    if (currentId !== undefined) annotateFiles(currentId, flatAnnotations(annotations))
+  }, [currentId, annotations, annotateFiles])
+
+  // Adopt completion statuses the host derived after a real filesystem change
+  // (the model wrote a marked file). `change === 0` is the mount run, which
+  // must not resurrect a previous session's markers — the store is the source
+  // of truth for what exists; the host only adds "done".
+  useEffect(() => {
+    if (currentId === undefined || change === 0) return
+    void readAnnotations(currentId).then(
+      (list) => { actions.mergeAnnotationStatuses(list) },
+      () => { /* best-effort: the next change retries */ },
+    )
+  }, [change, currentId, readAnnotations, actions])
+
   // Filtered body: real matches plus synthesized ancestors, all auto-expanded.
   const filteredTree = useMemo(
     () => search === null || cwd === undefined ? undefined : buildFilteredTree(cwd, search.matches),
     [cwd, search],
   )
+
+  /** Open the edit-marker editor for one file (record on the rail, then read). */
+  const openEditor = useCallback((path: string) => {
+    openEditorAction(actions, readFile, path)
+  }, [actions, readFile])
 
   if (cwd === undefined) {
     return (
@@ -310,6 +348,10 @@ export function FileTree({
         style={{ paddingLeft: `${12 + depth * 16}px` }}
         role="treeitem"
         aria-selected={selected}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          setMenu({ x: event.clientX, y: event.clientY, path: row.path, name: row.name, kind: row.kind })
+        }}
       >
         <button
           type="button"
@@ -319,14 +361,6 @@ export function FileTree({
           <span className={css.chevron}>{row.chevron}</span>
           <span className={css.name}>{row.name}</span>
         </button>
-        <span className={css.rowActions}>
-          <button type="button" className={css.rowAction} aria-label={t('action.copy')} title={t('action.copy')} onClick={() => { copyPath(row.path) }}>
-            {t('action.copy')}
-          </button>
-          <button type="button" className={css.rowAction} aria-label={t('action.open')} title={t('action.open')} onClick={() => { void openPath(row.path) }}>
-            {t('action.open')}
-          </button>
-        </span>
       </div>
     )
   }
@@ -384,6 +418,23 @@ export function FileTree({
   const filtering = normalizedQuery !== ''
   // Pending: no settled slice yet, or the settled slice belongs to an older query.
   const searchPendingView = filtering && (search === null || search.query !== normalizedQuery)
+
+  /** Context-menu rows: open, copy path, and the edit-marker action for text files. */
+  const menuItems = menu === null ? [] : [
+    { id: 'open', label: t('action.open') },
+    { id: 'copy', label: t('action.copy') },
+    ...(menu.kind === 'file' && isTextFile(menu.name) ? [{ id: 'mark', label: t('action.markFile') }] : []),
+  ]
+
+  /** Dispatch a context-menu selection, then close the menu. */
+  const handleMenu = (id: string): void => {
+    if (menu === null) return
+    const target = menu
+    setMenu(null)
+    if (id === 'open') void openPath(target.path)
+    else if (id === 'copy') copyPath(target.path)
+    else if (id === 'mark') openEditor(target.path)
+  }
 
   // Tree body: the filtered view owns the stage while a query is active,
   // falling back to the plain lazy tree once the box clears.
@@ -474,6 +525,18 @@ export function FileTree({
       <div className={css.treeBody} role="tree" aria-label={t('tree.label')}>
         {body}
       </div>
+      <Menu
+        open={menu !== null}
+        anchor={<span />}
+        portal
+        align="start"
+        side="bottom"
+        compact
+        getAnchorRect={() => (menu === null ? null : { left: menu.x, top: menu.y, right: menu.x, bottom: menu.y, width: 0, height: 0, x: menu.x, y: menu.y, toJSON: () => ({}) } as DOMRect)}
+        items={menuItems}
+        onSelect={(id) => { handleMenu(id) }}
+        onClose={() => { setMenu(null) }}
+      />
     </div>
   )
 }

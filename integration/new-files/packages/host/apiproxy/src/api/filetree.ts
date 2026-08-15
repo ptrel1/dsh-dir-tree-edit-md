@@ -49,6 +49,43 @@ export interface FileTreeSearchResult {
   truncated: boolean
 }
 
+/** One text file read for the editor surface. */
+export interface FileTreeReadResult {
+  /** Absolute path of the read file. */
+  path: string
+  /** Decoded UTF-8 text (a prefix when `truncated`). */
+  text: string
+  /** True when the backend cut `text` at its complete-read bound. */
+  truncated: boolean
+  /** Syntax-highlighting language hint, or absent for plain text. */
+  language?: string
+}
+
+/** One text-region edit marker's completion state. */
+export type FileAnnotationStatus = 'pending' | 'done'
+
+/** One user-marked text region plus the instruction the model should carry out there. */
+export interface FileAnnotation {
+  /** Client-generated stable identity. */
+  id: string
+  /** Absolute path of the marked file. */
+  path: string
+  /** 1-based first line of the marked region (inclusive). */
+  startLine: number
+  /** 1-based last line of the marked region (inclusive). */
+  endLine: number
+  /** 1-based column of the region start within its line (inclusive). */
+  startColumn: number
+  /** 1-based column of the region end within its line (exclusive). */
+  endColumn: number
+  /** The selected text snapshot at mark time. */
+  text: string
+  /** The user's instruction to the model for this region. */
+  instruction: string
+  /** Completion state: `pending` until the model edits the file, then `done`. */
+  status: FileAnnotationStatus
+}
+
 /** File-tree unary methods. */
 export interface FileTreeApi {
   /**
@@ -82,4 +119,34 @@ export interface FileTreeApi {
   select(
     request: RpcRequest<{ sessionId: SessionId; files: string[] }>,
   ): Promise<RpcResponse<{ selected: string[] }>>
+
+  /**
+   * Read one text file for the editor surface. Binary content fails with
+   * `not-a-text-file`; unreadable targets fail with `tree-unreadable`. The
+   * carrier's request signal follows the caller, stopping the backend's read
+   * on disconnect or timeout.
+   */
+  read(
+    request: RpcRequest<{ path: string }>,
+    signal: AbortSignal,
+  ): Promise<RpcResponse<FileTreeReadResult>>
+
+  /**
+   * Record a session's complete edit-marker set. The host logs a durable
+   * `file/annotation` event so the markers reach the model's context and the
+   * client's right-side tags; an absent selection service fails with
+   * `file-tree-unavailable`.
+   */
+  annotate(
+    request: RpcRequest<{ sessionId: SessionId; annotations: FileAnnotation[] }>,
+  ): Promise<RpcResponse<{ annotations: FileAnnotation[] }>>
+
+  /**
+   * Read a session's latest edit-marker set (including completion statuses the
+   * host derived from the model's file edits). Absent markers return an empty
+   * list; an absent selection service fails with `file-tree-unavailable`.
+   */
+  annotations(
+    request: RpcRequest<{ sessionId: SessionId }>,
+  ): Promise<RpcResponse<{ annotations: FileAnnotation[] }>>
 }

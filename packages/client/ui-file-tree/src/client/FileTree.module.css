@@ -196,28 +196,3 @@
 .git_deleted { color: var(--dsw-alias-state-error-primary); }
 .git_untracked { color: var(--dsw-alias-state-success-primary); }
 .git_ignored { color: var(--dsw-alias-label-secondary); }
-
-.rowActions {
-  flex: none;
-  display: none;
-  gap: 2px;
-}
-
-.row:hover .rowActions {
-  display: inline-flex;
-}
-
-.rowAction {
-  padding: 2px 6px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.rowAction:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}

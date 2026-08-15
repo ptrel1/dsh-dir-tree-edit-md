@@ -1119,3 +1119,483 @@ index 459036247a..41a140ef05 100644
      { "path": "./packages/host/frontend-static" },
      { "path": "./packages/host/plugin-inventory" },
      { "path": "./packages/host/webserver" },
+diff --git a/docs/persistence-catalog.md b/docs/persistence-catalog.md
+index 608a8c9..4970726 100644
+--- a/docs/persistence-catalog.md
++++ b/docs/persistence-catalog.md
+@@ -422,6 +422,22 @@ Source: [`packages/feedback/command-feedback/src/index.ts:62`](../packages/feedb
+ 
+ Source: [`packages/context/file-selection/src/types.ts:13`](../packages/context/file-selection/src/types.ts)
+ 
++<a id="fileannotation--log-only"></a>
++
++#### `file/annotation` — log-only
++
++```ts persistence-catalog
++/**
++ * The user changed the file tree's edit-marker set (annotated text regions
++ * and their instructions). Replaces the prior set (an empty `annotations`
++ * clears it). Logged so the model-visible markers and the client's tags are
++ * reconstructable from the session log.
++ */
++'file/annotation': { annotations: FileAnnotation[] }
++```
++
++Source: [`packages/context/file-selection/src/types.ts:46`](../packages/context/file-selection/src/types.ts)
++
+ ### `goal/*`
+ 
+ <a id="goalchange--log-only"></a>
+diff --git a/packages/api/remotes/src/client/index.ts b/packages/api/remotes/src/client/index.ts
+index 7bd7fe2..7662c10 100644
+--- a/packages/api/remotes/src/client/index.ts
++++ b/packages/api/remotes/src/client/index.ts
+@@ -35,8 +35,8 @@ export type {} from '@deepseek-ai/dsh-host-file-tree/types'
+  */
+ export type {
+   ClientResponse, ConfigurableProviderView, ConnectionHandle, ConnectionSinks, ContentBlock,
+-  CredentialView, DirectoryListing, DiscoveredModelView, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus,
+-  FileTreeListing, FileTreeSearchResult, HistoryEntry, HostFrame, IApiClient,
++  CredentialView, DirectoryListing, DiscoveredModelView, FileAnnotation, FileAnnotationStatus, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus,
++  FileTreeListing, FileTreeReadResult, FileTreeSearchResult, HistoryEntry, HostFrame, IApiClient,
+   MessageId, ModelCatalogFailure, ModelProviderGroup, ModelReasoningEffort, ModelSelection,
+   MuxFrame, PromptContentPart, QuestionResponsePayload, QueueAction, RpcError, RpcId, RpcReceipt,
+   RpcRequest, RpcResponse, RpcResult, SessionId, SessionModels, SessionSearchItem,
+diff --git a/packages/client/connection/src/client/api.ts b/packages/client/connection/src/client/api.ts
+index 7414cf2..0285e5a 100644
+--- a/packages/client/connection/src/client/api.ts
++++ b/packages/client/connection/src/client/api.ts
+@@ -8,7 +8,7 @@
+ export type {
+   ApiProxy, SessionsApi, SessionSearchItem, SessionSummary, PromptContentPart, HostApi, EventsApi, MuxFrame, HostFrame,
+   ApprovalResponsePayload, QuestionResponsePayload, HistoryEntry, ToolEventView,
+-  DirectoryEntry, DirectoryListing, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeSearchResult,
++  DirectoryEntry, DirectoryListing, FileAnnotation, FileAnnotationStatus, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeReadResult, FileTreeSearchResult,
+   ResponseValue, WorkspaceApi, WorkspaceId, WorkspaceView,
+   SkillsApi, SkillEntry,
+   ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+diff --git a/packages/client/connection/src/client/fixture.ts b/packages/client/connection/src/client/fixture.ts
+index 7c8425e..5b421fc 100644
+--- a/packages/client/connection/src/client/fixture.ts
++++ b/packages/client/connection/src/client/fixture.ts
+@@ -2567,6 +2567,9 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
+       list: request => ok(request, { path: request.payload.path, entries: [], truncated: false }),
+       search: request => ok(request, { path: request.payload.path, matches: [], truncated: false }),
+       select: request => ok(request, { selected: [...request.payload.files] }),
++      read: request => ok(request, { path: request.payload.path, text: '', truncated: false }),
++      annotate: request => ok(request, { annotations: [...request.payload.annotations] }),
++      annotations: request => ok(request, { annotations: [] }),
+     },
+     workspace: {
+       list: request => ok(request, {
+@@ -3106,6 +3109,9 @@ export class FixtureApiClient extends AbstractApiClient {
+       case 'filetree.list': return this.api.filetree.list(request, signal)
+       case 'filetree.search': return this.api.filetree.search(request, signal)
+       case 'filetree.select': return this.api.filetree.select(request)
++      case 'filetree.read': return this.api.filetree.read(request, signal)
++      case 'filetree.annotate': return this.api.filetree.annotate(request)
++      case 'filetree.annotations': return this.api.filetree.annotations(request)
+       case 'workspace.list': return this.api.workspace.list(request)
+       case 'workspace.create': return this.api.workspace.create(request)
+       case 'workspace.rename': return this.api.workspace.rename(request)
+diff --git a/packages/client/connection/src/client/index.ts b/packages/client/connection/src/client/index.ts
+index d311669..c63d4a8 100644
+--- a/packages/client/connection/src/client/index.ts
++++ b/packages/client/connection/src/client/index.ts
+@@ -16,7 +16,7 @@ import type { ClientConnectionRpc } from '../rpc.ts'
+ export type {
+   ApiProxy, SessionsApi, SessionSearchItem, SessionSummary, PromptContentPart, HostApi, EventsApi, MuxFrame, HostFrame,
+   ApprovalResponsePayload, QuestionResponsePayload, HistoryEntry, ToolEventView,
+-  DirectoryEntry, DirectoryListing, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeSearchResult,
++  DirectoryEntry, DirectoryListing, FileAnnotation, FileAnnotationStatus, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeReadResult, FileTreeSearchResult,
+   ToolCallView, ToolResultView, WorkspaceApi, WorkspaceId, WorkspaceView,
+   SkillsApi, SkillEntry,
+   ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+diff --git a/packages/client/connection/tests/fake-api.client.ts b/packages/client/connection/tests/fake-api.client.ts
+index 205d696..1818ac6 100644
+--- a/packages/client/connection/tests/fake-api.client.ts
++++ b/packages/client/connection/tests/fake-api.client.ts
+@@ -152,6 +152,9 @@ export class FakeApiClient implements IApiClient {
+     list: payload => this.record('filetree.list', payload, Promise.resolve(ok({ path: '/f', entries: [], truncated: false }))),
+     search: payload => this.record('filetree.search', payload, Promise.resolve(ok({ path: '/f', matches: [], truncated: false }))),
+     select: payload => this.record('filetree.select', payload, Promise.resolve(ok({ selected: [...(payload as { files: string[] }).files] }))),
++    read: payload => this.record('filetree.read', payload, Promise.resolve(ok({ path: '/f', text: '', truncated: false }))),
++    annotate: payload => this.record('filetree.annotate', payload, Promise.resolve(ok({ annotations: [] }))),
++    annotations: payload => this.record('filetree.annotations', payload, Promise.resolve(ok({ annotations: [] }))),
+   }
+ 
+   readonly workspace: IApiClient['workspace'] = {
+diff --git a/packages/client/runtime/src/client/contract/workspaces.ts b/packages/client/runtime/src/client/contract/workspaces.ts
+index f85644f..2525033 100644
+--- a/packages/client/runtime/src/client/contract/workspaces.ts
++++ b/packages/client/runtime/src/client/contract/workspaces.ts
+@@ -6,7 +6,7 @@
+  * the concrete class. Widening this interface is the explicit act of
+  * widening what features may do to the workspaces domain.
+  */
+-import type { DirectoryListing, FileTreeListing, FileTreeSearchResult, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
++import type { DirectoryListing, FileAnnotation, FileTreeListing, FileTreeReadResult, FileTreeSearchResult, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
+ import type { WorkspaceListState } from '../workspaces/service.ts'
+ import type { ObservableSnapshot } from './store.ts'
+ 
+@@ -79,6 +79,25 @@ export interface IWorkspaces {
+    * @param files - the complete selected-path set.
+    */
+   selectFiles(sessionId: SessionId, files: string[]): Promise<void>
++  /**
++   * Read one text file for the file-tree editor surface.
++   * @param path - absolute file to read.
++   * @param signal - aborts the wire request and the Host's read.
++   * @returns the decoded text prefix and a language hint.
++   */
++  readFile(path: string, signal?: AbortSignal): Promise<FileTreeReadResult>
++  /**
++   * Record a session's complete edit-marker set.
++   * @param sessionId - the session whose markers changed.
++   * @param annotations - the complete marker list.
++   */
++  annotateFiles(sessionId: SessionId, annotations: FileAnnotation[]): Promise<void>
++  /**
++   * Read a session's latest edit-marker set (with completion statuses).
++   * @param sessionId - the session to read.
++   * @returns the markers in recorded order.
++   */
++  readAnnotations(sessionId: SessionId): Promise<FileAnnotation[]>
+   /**
+    * Rename a Workspace.
+    * @param workspaceId - target workspace.
+diff --git a/packages/client/runtime/src/client/index.ts b/packages/client/runtime/src/client/index.ts
+index 8329f3a..09847f0 100644
+--- a/packages/client/runtime/src/client/index.ts
++++ b/packages/client/runtime/src/client/index.ts
+@@ -64,8 +64,8 @@ export type { SubagentAddress, JobView } from '@deepseek-ai/dsh-client-connectio
+ export type { WorkspaceListPhase } from './workspaces/manager.ts'
+ export type { WorkspaceListState } from './workspaces/service.ts'
+ export type {
+-  DirectoryEntry, DirectoryListing, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing,
+-  FileTreeSearchResult, WorkspaceId, WorkspaceView,
++  DirectoryEntry, DirectoryListing, FileAnnotation, FileAnnotationStatus, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing,
++  FileTreeReadResult, FileTreeSearchResult, WorkspaceId, WorkspaceView,
+ } from '@deepseek-ai/dsh-client-connection/client'
+ // Runtime owns the snapshot store; web-react only binds it to React.
+ export { createSnapshotStore, defineStore, shallowEqual } from './contract/store.ts'
+diff --git a/packages/client/runtime/src/client/workspaces/service.ts b/packages/client/runtime/src/client/workspaces/service.ts
+index a1bba43..75cdadd 100644
+--- a/packages/client/runtime/src/client/workspaces/service.ts
++++ b/packages/client/runtime/src/client/workspaces/service.ts
+@@ -2,7 +2,7 @@
+ 
+ import type { Context } from '@deepseek-ai/cordis'
+ import type {
+-  DirectoryListing, FileTreeListing, FileTreeSearchResult, IApiClient, RpcError,
++  DirectoryListing, FileAnnotation, FileTreeListing, FileTreeReadResult, FileTreeSearchResult, IApiClient, RpcError,
+   SessionId, WorkspaceId, WorkspaceView,
+ } from '@deepseek-ai/dsh-api-remotes/client'
+ import type { SnapshotStore } from '../contract/store.ts'
+@@ -284,6 +284,39 @@ export class WorkspaceRuntime implements IWorkspaces {
+     if (!response.result.ok) throw new Error(`file tree selection failed: ${response.result.error.message}`)
+   }
+ 
++  /**
++   * Read one text file for the file-tree editor surface.
++   * @param path - absolute file to read.
++   * @param signal - aborts the wire request and the Host's read.
++   * @returns the decoded text prefix and a language hint.
++   */
++  async readFile(path: string, signal?: AbortSignal): Promise<FileTreeReadResult> {
++    const response = await this.api.filetree.read({ path }, signal)
++    if (!response.result.ok) throw new Error(`file tree read failed: ${response.result.error.message}`)
++    return response.result.value
++  }
++
++  /**
++   * Record a session's complete edit-marker set.
++   * @param sessionId - the session whose markers changed.
++   * @param annotations - the complete marker list.
++   */
++  async annotateFiles(sessionId: SessionId, annotations: FileAnnotation[]): Promise<void> {
++    const response = await this.api.filetree.annotate({ sessionId, annotations })
++    if (!response.result.ok) throw new Error(`file tree annotate failed: ${response.result.error.message}`)
++  }
++
++  /**
++   * Read a session's latest edit-marker set (with completion statuses).
++   * @param sessionId - the session to read.
++   * @returns the markers in recorded order.
++   */
++  async readAnnotations(sessionId: SessionId): Promise<FileAnnotation[]> {
++    const response = await this.api.filetree.annotations({ sessionId })
++    if (!response.result.ok) throw new Error(`file tree annotations failed: ${response.result.error.message}`)
++    return response.result.value.annotations
++  }
++
+   /**
+    * Rename a Workspace.
+    * @param workspaceId - target workspace.
+diff --git a/packages/client/runtime/tests/fake-api.client.ts b/packages/client/runtime/tests/fake-api.client.ts
+index 9936616..af9826f 100644
+--- a/packages/client/runtime/tests/fake-api.client.ts
++++ b/packages/client/runtime/tests/fake-api.client.ts
+@@ -191,6 +191,9 @@ export class FakeApiClient implements IApiClient {
+     list: (payload: unknown) => this.record('filetree.list', payload, this.onListDir(payload)),
+     search: (payload: unknown) => this.record('filetree.search', payload, Promise.resolve(ok({ path: '/f', matches: [], truncated: false }))),
+     select: (payload: unknown) => this.record('filetree.select', payload, this.onSelect(payload)),
++    read: (payload: unknown) => this.record('filetree.read', payload, Promise.resolve(ok({ path: '/f', text: '', truncated: false }))),
++    annotate: (payload: unknown) => this.record('filetree.annotate', payload, Promise.resolve(ok({ annotations: [] }))),
++    annotations: (payload: unknown) => this.record('filetree.annotations', payload, Promise.resolve(ok({ annotations: [] }))),
+   }
+ 
+   // The archive-set field defaults at the binding below so list stubs keep
+diff --git a/packages/core/session/src/known-event-types.ts b/packages/core/session/src/known-event-types.ts
+index 9cfe71c..147282f 100644
+--- a/packages/core/session/src/known-event-types.ts
++++ b/packages/core/session/src/known-event-types.ts
+@@ -32,6 +32,7 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
+   'compaction/summary',
+   'feedback/record',
+   'file/selection',
++  'file/annotation',
+   'goal/change',
+   'hook/invoked',
+   'hook/result',
+diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
+index 3a29389..f843ae6 100644
+--- a/packages/host/apiproxy/src/api-proxy.ts
++++ b/packages/host/apiproxy/src/api-proxy.ts
+@@ -637,7 +637,7 @@ function directoryError(error: unknown): RpcError {
+ /** Map a file-tree listing failure onto the wire error vocabulary (unknown throws stay internal). */
+ function fileTreeError(error: unknown): RpcError {
+   if (error instanceof FileTreeError) {
+-    return { code: 'tree-unreadable', message: error.message, details: { path: error.path } }
++    return { code: error.code, message: error.message, details: { path: error.path } }
+   }
+   return { code: 'internal', message: error instanceof Error ? error.message : String(error), details: {} }
+ }
+@@ -3075,6 +3075,54 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+         fileSelection.select(found.agent.session, request.payload.files)
+         return ok(request, { selected: [...request.payload.files] })
+       },
++
++      async read(request, signal) {
++        const fileTree = ctx.get('fileTree')
++        if (fileTree === undefined) {
++          return err(request, {
++            code: 'file-tree-unavailable',
++            message: 'filetree.read needs a file-tree backend; none is composed',
++            details: {},
++          })
++        }
++        try {
++          return ok(request, await fileTree.readFile(request.payload.path, signal))
++        } catch (error: unknown) {
++          if (signal.aborted) {
++            return err(request, { code: 'cancelled', message: 'file tree read was aborted', details: {} })
++          }
++          return err(request, fileTreeError(error))
++        }
++      },
++
++      async annotate(request) {
++        const fileSelection = ctx.get('fileSelection')
++        if (fileSelection === undefined) {
++          return err(request, {
++            code: 'file-tree-unavailable',
++            message: 'filetree.annotate needs a file-selection service; none is composed',
++            details: {},
++          })
++        }
++        const found = await agentFor(request.payload.sessionId)
++        if ('error' in found) return err(request, found.error)
++        fileSelection.annotate(found.agent.session, request.payload.annotations)
++        return ok(request, { annotations: request.payload.annotations.map(a => ({ ...a })) })
++      },
++
++      async annotations(request) {
++        const fileSelection = ctx.get('fileSelection')
++        if (fileSelection === undefined) {
++          return err(request, {
++            code: 'file-tree-unavailable',
++            message: 'filetree.annotations needs a file-selection service; none is composed',
++            details: {},
++          })
++        }
++        const found = await agentFor(request.payload.sessionId)
++        if ('error' in found) return err(request, found.error)
++        return ok(request, { annotations: fileSelection.latestAnnotations(found.agent.session) })
++      },
+     },
+ 
+     goals: {
+diff --git a/packages/host/apiproxy/src/api/index.ts b/packages/host/apiproxy/src/api/index.ts
+index a5cb5b7..9986401 100644
+--- a/packages/host/apiproxy/src/api/index.ts
++++ b/packages/host/apiproxy/src/api/index.ts
+@@ -51,7 +51,8 @@ export type {
+ } from './sessions.ts'
+ export type { DirectoryEntry, DirectoryListing, HostApi } from './host.ts'
+ export type {
+-  FileTreeApi, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus, FileTreeListing, FileTreeSearchResult,
++  FileAnnotation, FileAnnotationStatus, FileTreeApi, FileTreeEntry, FileTreeEntryKind, FileTreeGitStatus,
++  FileTreeListing, FileTreeReadResult, FileTreeSearchResult,
+ } from './filetree.ts'
+ export type {
+   SubagentAddress, SubagentCatalog, SubagentInterruptReceipt, SubagentListEntry,
+diff --git a/packages/host/apiproxy/src/api/rpc-map.ts b/packages/host/apiproxy/src/api/rpc-map.ts
+index e445c26..5293d1f 100644
+--- a/packages/host/apiproxy/src/api/rpc-map.ts
++++ b/packages/host/apiproxy/src/api/rpc-map.ts
+@@ -47,6 +47,9 @@ export interface RpcMethodMap {
+   'filetree.list': FileTreeApi['list']
+   'filetree.search': FileTreeApi['search']
+   'filetree.select': FileTreeApi['select']
++  'filetree.read': FileTreeApi['read']
++  'filetree.annotate': FileTreeApi['annotate']
++  'filetree.annotations': FileTreeApi['annotations']
+   'workspace.list': WorkspaceApi['list']
+   'workspace.create': WorkspaceApi['create']
+   'workspace.rename': WorkspaceApi['rename']
+diff --git a/packages/host/apiproxy/src/api/rpc.schema.ts b/packages/host/apiproxy/src/api/rpc.schema.ts
+index 361c587..9c15625 100644
+--- a/packages/host/apiproxy/src/api/rpc.schema.ts
++++ b/packages/host/apiproxy/src/api/rpc.schema.ts
+@@ -49,6 +49,7 @@ export const rpcErrorSchema: z.ZodType<RpcError> = z.discriminatedUnion('code',
+   z.object({ code: z.literal('directory-picker-unavailable'), message: z.string(), details: z.object({ capability: z.string() }) }),
+   z.object({ code: z.literal('file-tree-unavailable'), message: z.string(), details: z.object({}) }),
+   z.object({ code: z.literal('tree-unreadable'), message: z.string(), details: z.object({ path: z.string() }) }),
++  z.object({ code: z.literal('not-a-text-file'), message: z.string(), details: z.object({ path: z.string() }) }),
+   z.object({ code: z.literal('agent-preset-read-only'), message: z.string(), details: z.object({ agentPreset: z.string(), reason: z.string() }) }),
+   z.object({ code: z.literal('agent-preset-locked'), message: z.string(), details: z.object({ sessionId: z.string(), agentPreset: z.string() }) }),
+   z.object({ code: z.literal('agent-preset-conflict'), message: z.string(), details: z.object({ sessionId: z.string(), requestedPreset: z.string(), existingPreset: z.string().optional() }) }),
+diff --git a/packages/host/apiproxy/src/api/rpc.ts b/packages/host/apiproxy/src/api/rpc.ts
+index 3fc7f00..c1b4daa 100644
+--- a/packages/host/apiproxy/src/api/rpc.ts
++++ b/packages/host/apiproxy/src/api/rpc.ts
+@@ -47,6 +47,7 @@ export interface RpcErrorDetailsMap {
+   'directory-picker-unavailable': { capability: string }
+   'file-tree-unavailable': {}
+   'tree-unreadable': { path: string }
++  'not-a-text-file': { path: string }
+   'agent-preset-read-only': { agentPreset: string; reason: string }
+   'agent-preset-locked': { sessionId: SessionId; agentPreset: string }
+   'agent-preset-conflict': { sessionId: SessionId; requestedPreset: string; existingPreset?: string }
+diff --git a/packages/host/apiproxy/src/fetch/client.ts b/packages/host/apiproxy/src/fetch/client.ts
+index cb101a3..860b770 100644
+--- a/packages/host/apiproxy/src/fetch/client.ts
++++ b/packages/host/apiproxy/src/fetch/client.ts
+@@ -18,7 +18,8 @@ import {
+   hostListDirectoryValueSchema, hostOpenPathValueSchema, hostPickDirectoryValueSchema,
+ } from '../api/host.schema.ts'
+ import {
+-  fileTreeListValueSchema, fileTreeSearchValueSchema, fileTreeSelectValueSchema,
++  fileTreeAnnotationsValueSchema, fileTreeAnnotateValueSchema, fileTreeListValueSchema,
++  fileTreeReadValueSchema, fileTreeSearchValueSchema, fileTreeSelectValueSchema,
+ } from '../api/filetree.schema.ts'
+ import {
+   sessionCancelValueSchema,
+@@ -119,6 +120,9 @@ export interface IApiClient {
+     list(payload: RequestPayload<'filetree.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.list'>>>
+     search(payload: RequestPayload<'filetree.search'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.search'>>>
+     select(payload: RequestPayload<'filetree.select'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.select'>>>
++    read(payload: RequestPayload<'filetree.read'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.read'>>>
++    annotate(payload: RequestPayload<'filetree.annotate'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.annotate'>>>
++    annotations(payload: RequestPayload<'filetree.annotations'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'filetree.annotations'>>>
+   }
+   workspace: {
+     list(payload: RequestPayload<'workspace.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.list'>>>
+@@ -202,6 +206,9 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
+   'filetree.list': fileTreeListValueSchema,
+   'filetree.search': fileTreeSearchValueSchema,
+   'filetree.select': fileTreeSelectValueSchema,
++  'filetree.read': fileTreeReadValueSchema,
++  'filetree.annotate': fileTreeAnnotateValueSchema,
++  'filetree.annotations': fileTreeAnnotationsValueSchema,
+   'workspace.list': workspaceListValueSchema,
+   'workspace.create': workspaceCreateValueSchema,
+   'workspace.rename': workspaceRenameValueSchema,
+@@ -458,6 +465,9 @@ export abstract class AbstractApiClient implements IApiClient {
+     list: (payload, signal) => this.callUnary('filetree.list', payload, signal),
+     search: (payload, signal) => this.callUnary('filetree.search', payload, signal),
+     select: (payload, signal) => this.callUnary('filetree.select', payload, signal),
++    read: (payload, signal) => this.callUnary('filetree.read', payload, signal),
++    annotate: (payload, signal) => this.callUnary('filetree.annotate', payload, signal),
++    annotations: (payload, signal) => this.callUnary('filetree.annotations', payload, signal),
+   }
+ 
+   readonly workspace: IApiClient['workspace'] = {
+diff --git a/packages/host/apiproxy/src/fetch/handler.ts b/packages/host/apiproxy/src/fetch/handler.ts
+index 4204ab9..b98c34c 100644
+--- a/packages/host/apiproxy/src/fetch/handler.ts
++++ b/packages/host/apiproxy/src/fetch/handler.ts
+@@ -35,7 +35,8 @@ import {
+   hostPickDirectoryRequestSchema,
+ } from '../api/host.schema.ts'
+ import {
+-  fileTreeListRequestSchema, fileTreeSearchRequestSchema, fileTreeSelectRequestSchema,
++  fileTreeAnnotationsRequestSchema, fileTreeAnnotateRequestSchema, fileTreeListRequestSchema,
++  fileTreeReadRequestSchema, fileTreeSearchRequestSchema, fileTreeSelectRequestSchema,
+ } from '../api/filetree.schema.ts'
+ import {
+   workspaceArchiveSessionRequestSchema,
+@@ -115,6 +116,9 @@ const UNARY_ROUTES: UnaryRoutes = {
+   'filetree.list': { schema: fileTreeListRequestSchema, invoke: (api, r, signal) => api.filetree.list(r, signal) },
+   'filetree.search': { schema: fileTreeSearchRequestSchema, invoke: (api, r, signal) => api.filetree.search(r, signal) },
+   'filetree.select': { schema: fileTreeSelectRequestSchema, invoke: (api, r) => api.filetree.select(r) },
++  'filetree.read': { schema: fileTreeReadRequestSchema, invoke: (api, r, signal) => api.filetree.read(r, signal) },
++  'filetree.annotate': { schema: fileTreeAnnotateRequestSchema, invoke: (api, r) => api.filetree.annotate(r) },
++  'filetree.annotations': { schema: fileTreeAnnotationsRequestSchema, invoke: (api, r) => api.filetree.annotations(r) },
+   'workspace.list': { schema: workspaceListRequestSchema, invoke: (api, r) => api.workspace.list(r) },
+   'workspace.create': { schema: workspaceCreateRequestSchema, invoke: (api, r) => api.workspace.create(r) },
+   'workspace.rename': { schema: workspaceRenameRequestSchema, invoke: (api, r) => api.workspace.rename(r) },
+diff --git a/packages/test-support/client-runtime/src/workspaces.ts b/packages/test-support/client-runtime/src/workspaces.ts
+index ea9f327..5ebbaec 100644
+--- a/packages/test-support/client-runtime/src/workspaces.ts
++++ b/packages/test-support/client-runtime/src/workspaces.ts
+@@ -1,7 +1,7 @@
+ /** Test-owned workspaces face: the renderer standard-kit observable plus recorded actions. */
+ import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+ import type {
+-  DirectoryListing, FileTreeListing, FileTreeSearchResult, IWorkspaces, SessionId, SnapshotStore, WorkspaceId,
++  DirectoryListing, FileAnnotation, FileTreeListing, FileTreeReadResult, FileTreeSearchResult, IWorkspaces, SessionId, SnapshotStore, WorkspaceId,
+   WorkspaceListState, WorkspaceView,
+ } from '@deepseek-ai/dsh-client-runtime/client'
+ import { workspaceListState } from './fixtures.ts'
+@@ -171,6 +171,26 @@ export class TestWorkspaces implements IWorkspaces {
+     if (stub !== undefined) await (stub(sessionId, files) as Promise<void>)
+   }
+ 
++  async readFile(path: string, signal?: AbortSignal): Promise<FileTreeReadResult> {
++    this.calls.push({ method: 'readFile', args: [path, signal] })
++    const stub = this.stubs.get('readFile')
++    if (stub !== undefined) return await (stub(path, signal) as Promise<FileTreeReadResult>)
++    return { path, text: '', truncated: false }
++  }
++
++  async annotateFiles(sessionId: SessionId, annotations: FileAnnotation[]): Promise<void> {
++    this.calls.push({ method: 'annotateFiles', args: [sessionId, annotations] })
++    const stub = this.stubs.get('annotateFiles')
++    if (stub !== undefined) await (stub(sessionId, annotations) as Promise<void>)
++  }
++
++  async readAnnotations(sessionId: SessionId): Promise<FileAnnotation[]> {
++    this.calls.push({ method: 'readAnnotations', args: [sessionId] })
++    const stub = this.stubs.get('readAnnotations')
++    if (stub !== undefined) return await (stub(sessionId) as Promise<FileAnnotation[]>)
++    return []
++  }
++
+   /**
+    * Browse child creation (recorded). The default joins parent and name.
+    * @param path - absolute existing parent directory.
+
+diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-primitives/src/index.ts
+--- a/packages/client/ui-primitives/src/index.ts
++++ b/packages/client/ui-primitives/src/index.ts
+@@ -41,6 +41,8 @@ export { WebBlock } from './WebBlock.tsx'
+ export type { WebBlockProps, WebSearchBlockProps, WebFetchBlockProps, WebSourceView } from './WebBlock.tsx'
+ export { CodeBlock } from './markdown/CodeBlock.tsx'
+ export type { CodeBlockProps } from './markdown/CodeBlock.tsx'
++export { grammarLoadCount, highlightLines, subscribeGrammarLoaded } from './markdown/highlight.ts'
++export type { HighlightSpan } from './markdown/highlight.ts'
+ export { JsonBlock } from './markdown/JsonBlock.tsx'
+ export { MarkdownText } from './markdown/MarkdownText.tsx'
+ export type { MarkdownCodeLabels, MarkdownFileMentions } from './markdown/MarkdownText.tsx'

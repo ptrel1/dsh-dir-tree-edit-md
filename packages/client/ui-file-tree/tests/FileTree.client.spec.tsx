@@ -70,6 +70,9 @@ function mount(overrides: Partial<FileTreeProps> = {}) {
   const openPath = vi.fn(async () => {})
   const copyPath = vi.fn()
   const selectFiles = vi.fn()
+  const readFile = vi.fn(async (path: string) => ({ path, text: '', truncated: false }))
+  const annotateFiles = vi.fn()
+  const readAnnotations = vi.fn(async () => [])
   const props: FileTreeProps = {
     wide: true,
     expandSidebar: vi.fn(),
@@ -82,12 +85,15 @@ function mount(overrides: Partial<FileTreeProps> = {}) {
     openPath,
     copyPath,
     selectFiles,
+    readFile,
+    annotateFiles,
+    readAnnotations,
     useFileTreeChange: hook({ revision: 0 }),
     t: makeTranslate(zh, commonZh),
     ...overrides,
   }
   const view = render(<FileTree {...props} />)
-  return { view, props, store, listDir, searchEntries, openPath, copyPath, selectFiles }
+  return { view, props, store, listDir, searchEntries, openPath, copyPath, selectFiles, readFile, annotateFiles, readAnnotations }
 }
 
 /** Expand the collapsed magnifier icon into the search box (the workspace search pattern). */
@@ -146,12 +152,12 @@ describe('FileTree', () => {
   it('opens and copies paths through the injected face', async () => {
     const { openPath, copyPath } = mount()
     await waitFor(() => { expect(screen.getByText('a.txt')).toBeTruthy() })
-    // The hover-revealed actions stay in the DOM (display:none); click the first row's pair.
-    const copies = screen.getAllByText('复制')
-    const opens = screen.getAllByText('打开')
-    fireEvent.click(copies[0]!)
+    // Right-click a row opens the context menu (portal-rendered into document.body).
+    fireEvent.contextMenu(screen.getByText('dir'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '复制路径' }))
     expect(copyPath).toHaveBeenCalledWith('/proj/dir')
-    fireEvent.click(opens[0]!)
+    fireEvent.contextMenu(screen.getByText('dir'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '默认程序打开' }))
     expect(openPath).toHaveBeenCalledWith('/proj/dir')
   })
 })

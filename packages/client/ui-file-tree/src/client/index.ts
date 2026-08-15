@@ -10,6 +10,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { FileTreeInjected, FileTreeHookSources } from './FileTree.tsx'
 import { FileTree } from './FileTree.tsx'
+import type { MarkPanelInjected } from './MarkPanel.tsx'
+import { MarkPanel } from './MarkPanel.tsx'
 import { createFileTreeStore } from './store.ts'
 import { en, zh, type FileTreeKey } from './locales.ts'
 
@@ -23,8 +25,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Required services (cordis fiber inject): slots, the wire-facing workspaces service, remote, and locale. */
-export const inject = ['slots', 'workspaces', 'locale', 'remote']
+/**
+ * Required services (cordis fiber inject): slots, the wire-facing workspaces
+ * service, remote, locale, and layout (the dock width driver for the mark
+ * panel's rightmost column).
+ */
+export const inject = ['slots', 'workspaces', 'locale', 'remote', 'layout']
 
 /**
  * Client plugin body: register the dictionaries, the change signal, and the
@@ -52,19 +58,41 @@ export function apply(ctx: ClientContext): void {
         // Selection sync is best-effort; the tree keeps its local highlight.
       })
     },
+    readFile: path => ctx.workspaces.readFile(path),
+    annotateFiles: (sessionId, annotations) => {
+      void ctx.workspaces.annotateFiles(sessionId, annotations).catch(() => {
+        // Marker sync is best-effort; the panel keeps its local view.
+      })
+    },
+    readAnnotations: sessionId => ctx.workspaces.readAnnotations(sessionId),
     hooks: { fileTreeChange: changeSignal },
   })
+
+  // One handle shared by the tree and the dock: both entries resolve to the
+  // same store instance, so a mark opened from the tree shows in the panel and
+  // a tag click lands back in the tree's state without cross-slot plumbing.
+  const fileTreeStore = createFileTreeStore()
 
   ctx.effect(() => {
     const offChange = ctx.remote.$on('filetree/change', () => {
       changeSignal.update((d) => { d.revision += 1 })
     })
-    const offSlot = ctx.slots.inject('sidebar.filetree', () => ctx.slots.register({
+    const offTree = ctx.slots.inject('sidebar.filetree', () => ctx.slots.register({
       name: 'sidebar.filetree',
       locale: NS,
-      store: createFileTreeStore(),
+      store: fileTreeStore,
       inject: injected,
     }, FileTree))
-    return () => { offChange(); offSlot() }
+    const offDock = ctx.slots.inject('shell.dock', () => ctx.slots.register({
+      name: 'shell.dock',
+      locale: NS,
+      store: fileTreeStore,
+      inject: (): MarkPanelInjected => ({
+        readFile: path => ctx.workspaces.readFile(path),
+        // The mode contract keeps the widths owned by the layout package.
+        setDockMode: mode => ctx.layout.setDockMode(mode),
+      }),
+    }, MarkPanel))
+    return () => { offChange(); offTree(); offDock() }
   }, 'ui-file-tree: registration')
 }
