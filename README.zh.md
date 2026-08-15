@@ -4,7 +4,7 @@ DeepSeek Harness（dsh）Web GUI 的**侧边栏文件树插件**：在懒加载�
 
 [English](README.md) | [中文](README.zh.md)
 
-![dsh Web GUI 中的文件树](docs/screenshot.jpg)
+![dsh Web GUI 中的文件树](docs/screenshot.png)
 
 ## 特性
 
@@ -36,7 +36,7 @@ integration/
 ├── wiring.patch            # dsh 核心接线改动（RPC、侧边栏槽位、事件转发）
 └── new-files/              # 补丁引入的 dsh 核心新文件
 docs/
-├── screenshot.jpg                              # 本 README 所用的界面截图
+├── screenshot.png                              # 本 README 所用的界面截图
 └── 2026-08-14-file-tree-capability-seam.md     # 完整设计记录（中英双语）
 ```
 

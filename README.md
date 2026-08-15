@@ -7,7 +7,7 @@ for the model to know about.
 
 [English](README.md) | [中文](README.zh.md)
 
-![File tree in the dsh web GUI](docs/screenshot.jpg)
+![File tree in the dsh web GUI](docs/screenshot.png)
 
 ## Features
 
@@ -66,7 +66,7 @@ integration/
 ├── wiring.patch            # dsh core wiring changes (RPCs, sidebar slot, events)
 └── new-files/              # new dsh core files the patch introduces
 docs/
-├── screenshot.jpg                              # UI screenshot used in this README
+├── screenshot.png                              # UI screenshot used in this README
 └── 2026-08-14-file-tree-capability-seam.md     # full design record (EN + ZH)
 ```
 
