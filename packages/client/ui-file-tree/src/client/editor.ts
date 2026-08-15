@@ -26,17 +26,19 @@ export type ReadFile = (path: string) => Promise<FileTreeReadResult>
  */
 export function openEditor(actions: FileTreeActions, readFile: ReadFile, path: string): void {
   actions.markOpened(path)
-  actions.setEditor({ path, text: '', truncated: false, failed: false })
+  // Empty surface, read in flight: the editor shows a loading affordance for
+  // large files instead of an empty body while the wire read settles.
+  actions.setEditor({ path, text: '', truncated: false, failed: false, loading: true })
   void readFile(path).then(
     (result) => {
       actions.setEditor({
-        path: result.path, text: result.text, truncated: result.truncated, failed: false,
+        path: result.path, text: result.text, truncated: result.truncated, failed: false, loading: false,
         ...(result.language === undefined ? {} : { language: result.language }),
       })
     },
     (error: unknown) => {
       actions.setEditor({
-        path, text: '', truncated: false, failed: true,
+        path, text: '', truncated: false, failed: true, loading: false,
         error: error instanceof Error ? error.message : String(error),
       })
     },

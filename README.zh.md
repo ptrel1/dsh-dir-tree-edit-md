@@ -1,10 +1,8 @@
 # dir-tree-dsh
 
-DeepSeek Harness（dsh）Web GUI 的**侧边栏文件树插件**：在懒加载展开的树里浏览工作区的真实文件，每行显示 git 状态着色，按文件名就地过滤搜索，可多选文件让模型知晓，也可标记文本段落让模型修改。
+DeepSeek Harness（dsh）Web GUI 的**侧边栏文件树插件**：在懒加载展开的树里浏览工作区的真实文件，每行显示 git 状态着色，按文件名就地过滤搜索，并可多选文件让模型知晓。
 
 [English](README.md) | [中文](README.zh.md)
-
-插件仓库：<https://github.com/Gxuxiang/dir-tree-dsh>
 
 ![dsh Web GUI 中的文件树](docs/screenshot.jpg)
 
@@ -16,7 +14,7 @@ DeepSeek Harness（dsh）Web GUI 的**侧边栏文件树插件**：在懒加载�
 - **免轮询实时刷新** — Chokidar 监听器发出 `filetree/change`，经 dsh 的 remote-event 白名单转发到客户端；客户端中止被取代的请求并重列已展开视图。
 - **树内文件搜索** — 树上方搜索框按文件名（忽略大小写子串，文件与目录都算）过滤，同时保留树形：匹配项沿合成的祖先链自动展开显示，匹配行保留 git 着色（合成的祖先行不着色）。清空查询恢复普通树；点击匹配目录清除过滤并在普通树中定位展开该目录。
 - **右键菜单** — 右键任意行弹出菜单：`默认程序打开`、`复制文件/文件夹路径`；对文本文件还有 `文件编辑标记`。
-- **文件编辑标记** — 最右侧的 **dock 列**由插件经 dsh 布局服务以三种离散模式驱动（`closed` → 标签 `rail` → `expanded` 编辑器），其中是语法高亮编辑器（shiki，按语言），划选文本后弹出说明框告诉模型要对这段文字做什么；可标记多个段落、多个文件，标记可删除。每个已标记文件折叠成 rail 上的一个 tag（挂起为琥珀色，完成转绿）。标记以持久化 `file/annotation` 会话事件落日志并渲染进模型上下文；当模型的 `write`/`edit` 工具改动该文件时，对应标记自动转为 `done`。
+- **文件编辑标记** — 右侧边栏编辑器（按语言 shiki 语法高亮）里划选文本，弹出说明框告诉模型要对这段文字做什么；可标记多个段落、多个文件，标记可删除。每个已标记文件在右侧折叠成一个 tag（挂起为琥珀色，完成转绿）。标记以持久化 `file/annotation` 会话事件落日志并渲染进模型上下文；当模型的 `write`/`edit` 工具改动该文件时，对应标记自动转为 `done`。
 - **为大仓库加固**（在真实 monorepo 上实测）：
   - git-status 扫描按仓库根单飞、按截止时间终止（`gitStatusTimeoutMs`，默认 8 秒）；到期时列举无着色地落定而非卡死。
   - `--ignored` 默认关闭（`gitStatusIncludeIgnored` 可选开启）：实测开启后一次扫描 >5 分钟，关闭仅 0.06 秒。
@@ -31,7 +29,7 @@ packages/
 │   ├── file-tree/          # Service Definition：ctx.fileTree、listDir、契约类型
 │   └── file-tree-local/    # 后端：目录列举、git status、Chokidar 监听
 ├── client/
-│   └── ui-file-tree/       # 浏览器树 UI：展开、git 着色、名称搜索、多选、编辑标记 + dock 面板
+│   └── ui-file-tree/       # 浏览器树 UI：展开、git 着色、名称搜索、多选
 └── context/
     └── file-selection/     # 选择 → 持久会话事件 → 模型上下文
 integration/
@@ -42,11 +40,11 @@ docs/
 └── 2026-08-14-file-tree-capability-seam.md     # 完整设计记录（中英双语）
 ```
 
-插件包使用 pnpm `workspace:^` 依赖，设计为放在 **dsh 工作区内部**运行。`integration/` 携带插件所需的 dsh 核心接线（apiproxy 的 `filetree.list`/`filetree.search`/`filetree.select`/`filetree.read`/`filetree.annotate`/`filetree.annotations` RPC、`sidebar.filetree` 与 `shell.dock` 槽位及"工作区/文件"切换、`filetree/change` 事件转发白名单、`file/annotation` 会话事件、布局 dock 模式服务（`setDockMode`）、ui-primitives 语法高亮导出、web-app 挂载行）。
+插件包使用 pnpm `workspace:^` 依赖，设计为放在 **dsh 工作区内部**运行。`integration/` 携带插件所需的 dsh 核心接线（apiproxy 的 `filetree.list`/`filetree.select`/`filetree.search` RPC、`sidebar.filetree` 槽位与"工作区/文件"切换、`filetree/change` 事件转发白名单、web-app 挂载行）。
 
 ## 安装到 dsh 工作区
 
-要求：[dsh](https://github.com/deepseek-ai/deepseek-harness) 一份检出、Node 22+、pnpm。
+要求：[dsh](https://github.com/deepseek-harness) 一份检出、Node 22+、pnpm。
 
 1. **复制插件包**到 monorepo 的对应路径：
 
@@ -64,7 +62,7 @@ docs/
    cp -r integration/new-files/* .
    ```
 
-   `wiring.patch` 是相对本插件开发时那份 dsh 检出的核心改动快照（dsh `0.1.0-rc.5` 加 `feat/npm-public` 合并，提交 `47f943859b`）；在更新的 dsh 上需手动解决冲突。
+   `wiring.patch` 是相对本插件开发时那份 dsh 检出的核心改动快照；在更新的 dsh 上需手动解决冲突。
 
 3. **安装**（更新 lockfile 并链接新 workspace 包）：
 

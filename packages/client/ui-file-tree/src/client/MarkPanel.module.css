@@ -202,6 +202,28 @@
   font-size: 13px;
 }
 
+/* File content read in flight (large files): a centered spinner affordance so
+   the open editor never looks empty while the wire read settles. */
+.editorLoading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+}
+
+.loadingIcon {
+  animation: editorSpin 1s linear infinite;
+}
+
+@keyframes editorSpin {
+  to { transform: rotate(360deg) }
+}
+
 .lines {
   flex: 1;
   min-height: 0;

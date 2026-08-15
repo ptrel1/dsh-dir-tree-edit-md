@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
-  grammarLoadCount, highlightLines, subscribeGrammarLoaded, IconCloseFill14,
+  grammarLoadCount, highlightLines, subscribeGrammarLoaded, IconCloseFill14, IconLoadingOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HighlightSpan } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { FileAnnotation, FileAnnotationStatus } from '@deepseek-ai/dsh-client-runtime/client'
@@ -146,11 +146,12 @@ function EditorLine({ lineText, lineIndex, runs, markers, highlightId }: {
 }
 
 /** The open-file editor body: highlighted source with selectable text. */
-function Editor({ text, truncated, language, failed, annotations, onMark, onDelete, t }: {
+function Editor({ text, truncated, language, failed, loading, annotations, onMark, onDelete, t }: {
   text: string
   truncated: boolean
   language: string | undefined
   failed: boolean
+  loading: boolean
   annotations: readonly FileAnnotation[]
   onMark: (range: ReturnType<typeof selectionRange>) => void
   onDelete: (id: string) => void
@@ -178,47 +179,56 @@ function Editor({ text, truncated, language, failed, annotations, onMark, onDele
 
   return (
     <div className={css.editorBody}>
-      <div ref={bodyRef} className={css.lines} onMouseUp={() => {
-        if (bodyRef.current === null) return
-        onMark(selectionRange(bodyRef.current, lines))
-      }}>
-        {lines.map((lineText, index) => (
-          <EditorLine
-            key={index}
-            lineText={lineText}
-            lineIndex={index}
-            runs={highlighted?.[index]}
-            markers={markersOnLine(annotations, index, lineText.length)}
-            highlightId={highlightId}
-          />
-        ))}
-      </div>
-      {truncated && <div className={css.truncated}>{t('editor.truncated')}</div>}
-      {annotations.length > 0 && (
-        <div className={css.markerList}>
-          {annotations.map(annotation => (
-            <div
-              key={annotation.id}
-              className={clsx(css.markerItem, annotation.id === highlightId && css.markerItemActive)}
-              data-active={annotation.id === highlightId || undefined}
-              onClick={() => { focusMarker(annotation.id, annotation.startLine) }}
-            >
-              <span className={clsx(css.markerDot, annotation.status === 'done' ? css.markerDone : css.markerPending)} />
-              <span className={css.markerItemText}>
-                {annotation.startLine === annotation.endLine ? `L${annotation.startLine}` : `L${annotation.startLine}-${annotation.endLine}`}
-                {' '}{annotation.instruction}
-              </span>
-              <button
-                type="button"
-                className={css.deleteButton}
-                aria-label={t('action.deleteMarker')}
-                onClick={(e) => { e.stopPropagation(); onDelete(annotation.id) }}
-              >
-                <IconCloseFill14 />
-              </button>
-            </div>
-          ))}
+      {loading ? (
+        <div className={css.editorLoading} role="status" aria-label={t('editor.loading')}>
+          <IconLoadingOutline16 className={css.loadingIcon} />
+          <span>{t('editor.loading')}</span>
         </div>
+      ) : (
+        <>
+          <div ref={bodyRef} className={css.lines} onMouseUp={() => {
+            if (bodyRef.current === null) return
+            onMark(selectionRange(bodyRef.current, lines))
+          }}>
+            {lines.map((lineText, index) => (
+              <EditorLine
+                key={index}
+                lineText={lineText}
+                lineIndex={index}
+                runs={highlighted?.[index]}
+                markers={markersOnLine(annotations, index, lineText.length)}
+                highlightId={highlightId}
+              />
+            ))}
+          </div>
+          {truncated && <div className={css.truncated}>{t('editor.truncated')}</div>}
+          {annotations.length > 0 && (
+            <div className={css.markerList}>
+              {annotations.map(annotation => (
+                <div
+                  key={annotation.id}
+                  className={clsx(css.markerItem, annotation.id === highlightId && css.markerItemActive)}
+                  data-active={annotation.id === highlightId || undefined}
+                  onClick={() => { focusMarker(annotation.id, annotation.startLine) }}
+                >
+                  <span className={clsx(css.markerDot, annotation.status === 'done' ? css.markerDone : css.markerPending)} />
+                  <span className={css.markerItemText}>
+                    {annotation.startLine === annotation.endLine ? `L${annotation.startLine}` : `L${annotation.startLine}-${annotation.endLine}`}
+                    {' '}{annotation.instruction}
+                  </span>
+                  <button
+                    type="button"
+                    className={css.deleteButton}
+                    aria-label={t('action.deleteMarker')}
+                    onClick={(e) => { e.stopPropagation(); onDelete(annotation.id) }}
+                  >
+                    <IconCloseFill14 />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -367,6 +377,7 @@ export function MarkPanel({ useStore, actions, readFile, setDockMode, t }: MarkP
           truncated={editor.truncated}
           language={editor.language}
           failed={editor.failed}
+          loading={editor.loading === true}
           annotations={annotations[editor.path] ?? []}
           onMark={(range) => {
             if (range === null) return

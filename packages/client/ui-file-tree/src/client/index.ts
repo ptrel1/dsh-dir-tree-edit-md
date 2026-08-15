@@ -90,7 +90,7 @@ export function apply(ctx: ClientContext): void {
       inject: (): MarkPanelInjected => ({
         readFile: path => ctx.workspaces.readFile(path),
         // The mode contract keeps the widths owned by the layout package.
-        setDockMode: mode => ctx.layout.setDockMode(mode),
+        setDockMode: (mode) => { ctx.layout.setDockMode(mode) },
       }),
     }, MarkPanel))
     return () => { offChange(); offTree(); offDock() }

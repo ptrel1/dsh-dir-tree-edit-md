@@ -24,7 +24,7 @@ export type FileTreeSearchState = {
 export type FileEditorState = {
   /** Absolute path of the file being viewed. */
   path: string
-  /** Decoded text (a prefix when `truncated`). */
+  /** Decoded text (a prefix when `truncated`); empty while the read is in flight. */
   text: string
   /** The host capped the read; the editor notes the file continues. */
   truncated: boolean
@@ -34,6 +34,8 @@ export type FileEditorState = {
   failed: boolean
   /** Operator-facing failure reason, when `failed`. */
   error?: string
+  /** The host read is in flight; the editor shows a loading affordance instead of content. */
+  loading?: boolean
 }
 
 /** File-tree browsing state (process-local; nothing here is durable). */
@@ -136,7 +138,7 @@ export function createFileTreeStore(): EngineStoreHandle<FileTreeState, FileTree
         for (const path of Object.keys(d.annotations)) {
           const list = d.annotations[path]
           if (list === undefined) continue
-          d.annotations[path] = list.map(a => {
+          d.annotations[path] = list.map((a) => {
             const status = statusById.get(a.id)
             return status === undefined ? a : { ...a, status }
           })
@@ -162,9 +164,8 @@ export function createFileTreeStore(): EngineStoreHandle<FileTreeState, FileTree
       closeMarked: (d, path) => {
         d.marked = d.marked.filter(p => p !== path)
         if (d.annotations[path] !== undefined) {
-          const next = { ...d.annotations }
-          delete next[path]
-          d.annotations = next
+          const { [path]: _removed, ...rest } = d.annotations
+          d.annotations = rest
         }
         if (d.editor?.path === path) d.editor = null
       },

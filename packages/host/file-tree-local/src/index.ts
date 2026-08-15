@@ -217,7 +217,16 @@ export default class LocalFileTree extends FileTree {
     const target = resolve(path)
     let handle: Awaited<ReturnType<typeof open>>
     try {
-      handle = await raceAbort(open(target, 'r'), signal)
+      const opening = open(target, 'r')
+      handle = await raceAbort(opening, signal).catch((error: unknown) => {
+        // If the abort won the race, `open` can still settle later with a
+        // FileHandle nobody owns — close it so the descriptor is never
+        // abandoned to GC (DEP0137), mirroring the opendir cleanup below.
+        void opening.then(fh => fh.close().catch(swallowCloseFailure), () => {
+          // Already rejected: raceAbort surfaced or swallowed it.
+        })
+        throw error
+      })
     } catch (error: unknown) {
       signal?.throwIfAborted()
       throw new FileTreeError('tree-unreadable', target, `cannot read ${target}: ${messageOf(error)}`)

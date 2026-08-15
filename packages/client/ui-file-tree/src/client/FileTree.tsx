@@ -98,7 +98,8 @@ function sanitizeSearchQuery(value: string): string {
  * @returns the tree element.
  */
 export function FileTree({
-  useSessions, useStore, actions, listDir, searchEntries, openPath, copyPath, selectFiles, readFile, annotateFiles, readAnnotations, useFileTreeChange, t,
+  useSessions, useStore, actions, listDir, searchEntries, openPath,
+  copyPath, selectFiles, readFile, annotateFiles, readAnnotations, useFileTreeChange, t,
 }: FileTreeProps) {
   const list = useSessions(s => s)
   const currentId = list.current
@@ -532,7 +533,12 @@ export function FileTree({
         align="start"
         side="bottom"
         compact
-        getAnchorRect={() => (menu === null ? null : { left: menu.x, top: menu.y, right: menu.x, bottom: menu.y, width: 0, height: 0, x: menu.x, y: menu.y, toJSON: () => ({}) } as DOMRect)}
+        getAnchorRect={() => (menu === null
+          ? null
+          : {
+            left: menu.x, top: menu.y, right: menu.x, bottom: menu.y,
+            width: 0, height: 0, x: menu.x, y: menu.y, toJSON: () => ({}),
+          })}
         items={menuItems}
         onSelect={(id) => { handleMenu(id) }}
         onClose={() => { setMenu(null) }}

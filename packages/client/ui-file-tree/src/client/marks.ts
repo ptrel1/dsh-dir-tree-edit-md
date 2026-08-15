@@ -95,8 +95,8 @@ export function selectionRange(root: HTMLElement, lines: readonly string[]): (Se
   if (!root.contains(startLine) || !root.contains(endLine)) return null
   const start = Number(startLine.dataset.line) - 1
   const end = Number(endLine.dataset.line) - 1
-  let startColumn = offsetInLine(startLine, range.startContainer, range.startOffset)
-  let endColumn = offsetInLine(endLine, range.endContainer, range.endOffset)
+  const startColumn = offsetInLine(startLine, range.startContainer, range.startOffset)
+  const endColumn = offsetInLine(endLine, range.endContainer, range.endOffset)
   // A forward drag can place the anchor after the focus; normalize so start <= end.
   let firstLine = start
   let firstColumn = startColumn
@@ -109,7 +109,10 @@ export function selectionRange(root: HTMLElement, lines: readonly string[]): (Se
     lastColumn = startColumn
   }
   if (firstLine === lastLine && firstColumn === lastColumn) return null
-  return { startLine: firstLine, startColumn: firstColumn, endLine: lastLine, endColumn: lastColumn, text: selectedText(lines, firstLine, firstColumn, lastLine, lastColumn) }
+  return {
+    startLine: firstLine, startColumn: firstColumn, endLine: lastLine, endColumn: lastColumn,
+    text: selectedText(lines, firstLine, firstColumn, lastLine, lastColumn),
+  }
 }
 
 /** Reconstruct the selected source text from the line array (DOM text drops inter-line newlines, so this is authoritative). */
