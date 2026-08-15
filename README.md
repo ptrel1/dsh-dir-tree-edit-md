@@ -2,10 +2,12 @@
 
 A **file-tree sidebar plugin** for the DeepSeek Harness (dsh) web GUI: browse a
 workspace's real files in a lazy-expanding tree, see git status on every row,
-search by file name with the tree filtered in place, and multi-select files
-for the model to know about.
+search by file name with the tree filtered in place, multi-select files for the
+model to know about, and mark text passages for the model to edit.
 
 [English](README.md) | [中文](README.zh.md)
+
+Plugin repository: <https://github.com/Gxuxiang/dir-tree-dsh>
 
 ![File tree in the dsh web GUI](docs/screenshot.jpg)
 
@@ -31,13 +33,16 @@ for the model to know about.
   filter and reveals that directory in the plain tree.
 - **Right-click menu** — right-click any row for `Open with default app`,
   `Copy file/folder path`, and — for text files — `Edit marker`.
-- **File edit markers** — a right-side editor (shiki syntax highlighting by
-  language) lets you drag-select text and describe, in a pop-up box, what the
-  model should do to that passage. Mark multiple passages and multiple files;
-  markers are deletable, each marked file collapses to a right-side tag (amber
-  while pending, green once done). Markers persist as a `file/annotation`
-  session event and render into the model context; when the model's `write` or
-  `edit` tool touches a marked file, its markers flip to `done`.
+- **File edit markers** — the rightmost **dock column**, driven by the plugin
+  through the dsh layout service between three discrete modes (`closed` →
+  tag `rail` → `expanded` editor), holds a syntax-highlighted editor (shiki,
+  by language) where you drag-select text and describe, in a pop-up box, what
+  the model should do to that passage. Mark multiple passages and multiple
+  files; markers are deletable, each marked file collapses to a rail tag
+  (amber while pending, green once done). Markers persist as a
+  `file/annotation` session event and render into the model context; when the
+  model's `write` or `edit` tool touches a marked file, its markers flip to
+  `done`.
 - **Hardened for big repos** (measured on a real monorepo):
   - git-status scans are single-flighted per repo root and deadline-bounded
     (`gitStatusTimeoutMs`, default 8 s); on expiry the listing settles without
@@ -59,7 +64,7 @@ packages/
 │   ├── file-tree/          # Service Definition: ctx.fileTree, listDir, types
 │   └── file-tree-local/    # backend: listing, git status, Chokidar watcher
 ├── client/
-│   └── ui-file-tree/       # browser tree UI: expansion, git ink, name search, multi-select
+│   └── ui-file-tree/       # browser tree UI: expansion, git ink, name search, multi-select, edit markers + dock panel
 └── context/
     └── file-selection/     # selection → durable session event → model context
 integration/
@@ -72,13 +77,16 @@ docs/
 
 The plugin packages use pnpm `workspace:^` dependencies and are meant to live
 **inside a dsh checkout**. `integration/` carries the dsh-core wiring the
-plugin needs (apiproxy `filetree.list`/`filetree.select`/`filetree.search`
-RPCs, the `sidebar.filetree` slot and Workspace/Files switch, the forwarded
-`filetree/change` event, and the web-app mount rows).
+plugin needs (apiproxy
+`filetree.list`/`filetree.search`/`filetree.select`/`filetree.read`/`filetree.annotate`/`filetree.annotations`
+RPCs, the `sidebar.filetree` and `shell.dock` slots plus the Workspace/Files
+switch, the forwarded `filetree/change` event, the `file/annotation` session
+event, the layout dock-mode service (`setDockMode`), the ui-primitives
+grammar-highlight exports, and the web-app mount rows).
 
 ## Install into a dsh checkout
 
-Requirements: a [dsh](https://github.com/deepseek-harness) checkout, Node 22+,
+Requirements: a [dsh](https://github.com/deepseek-ai/deepseek-harness) checkout, Node 22+,
 pnpm.
 
 1. **Copy the plugin packages** into the monorepo at the same paths:
@@ -98,7 +106,8 @@ pnpm.
    ```
 
    `wiring.patch` is a snapshot of dsh-core changes against the checkout this
-   plugin was developed on; on a newer dsh, resolve conflicts manually.
+   plugin was developed on (dsh `0.1.0-rc.5` plus the `feat/npm-public` merge,
+   commit `47f943859b`); on a newer dsh, resolve conflicts manually.
 
 3. **Install** (updates the lockfile and links the new workspace packages):
 
