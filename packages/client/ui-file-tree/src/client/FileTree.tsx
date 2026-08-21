@@ -339,7 +339,7 @@ export function FileTree({
     kind: FileTreeEntryKind
     gitStatus: FileTreeGitStatus | undefined
     chevron: string
-    onLabel: () => void
+    onLabel: (event: React.MouseEvent) => void
   }, depth: number): ReactNode => {
     const selected = selection.includes(row.path)
     return (
@@ -377,10 +377,18 @@ export function FileTree({
           kind: entry.kind,
           gitStatus: entry.gitStatus,
           chevron: isDir ? (isOpen ? '▾' : '▸') : '',
-          onLabel: () => {
-            if (isDir) toggleDir(entry.path)
-            else actions.toggleSelection(entry.path)
-          },
+        onLabel: (event?: React.MouseEvent) => {
+          if (isDir) {
+            toggleDir(entry.path)
+          } else if (event && (event.ctrlKey || event.metaKey)) {
+            actions.toggleSelection(entry.path)
+          } else {
+            actions.toggleSelection(entry.path)
+            if (isTextFile(entry.name)) {
+              openEditor(entry.path)
+            }
+          }
+        },
         }, depth)}
         {isDir && isOpen && (
           <>
@@ -407,9 +415,17 @@ export function FileTree({
         // Synthesized ancestors were never listed: no git ink on them.
         gitStatus: node.synthesized ? undefined : node.gitStatus,
         chevron: node.kind === 'directory' ? '▾' : '',
-        onLabel: () => {
-          if (node.kind === 'directory') revealDir(node)
-          else actions.toggleSelection(node.path)
+        onLabel: (event: React.MouseEvent) => {
+          if (node.kind === 'directory') {
+            revealDir(node)
+          } else if (event.ctrlKey || event.metaKey) {
+            actions.toggleSelection(node.path)
+          } else {
+            actions.toggleSelection(node.path)
+            if (isTextFile(node.name)) {
+              openEditor(node.path)
+            }
+          }
         },
       }, depth)}
       {node.children.map(child => renderFilteredLevel(child, depth + 1))}
