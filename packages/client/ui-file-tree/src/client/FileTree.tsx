@@ -377,18 +377,18 @@ export function FileTree({
           kind: entry.kind,
           gitStatus: entry.gitStatus,
           chevron: isDir ? (isOpen ? '▾' : '▸') : '',
-        onLabel: (event?: React.MouseEvent) => {
-          if (isDir) {
-            toggleDir(entry.path)
-          } else if (event && (event.ctrlKey || event.metaKey)) {
-            actions.toggleSelection(entry.path)
-          } else {
-            actions.toggleSelection(entry.path)
-            if (isTextFile(entry.name)) {
-              openEditor(entry.path)
+          onLabel: (event?: React.MouseEvent) => {
+            if (isDir) {
+              toggleDir(entry.path)
+            } else if (event && (event.ctrlKey || event.metaKey)) {
+              actions.toggleSelection(entry.path)
+            } else {
+              actions.toggleSelection(entry.path)
+              if (isTextFile(entry.name)) {
+                openEditor(entry.path)
+              }
             }
-          }
-        },
+          },
         }, depth)}
         {isDir && isOpen && (
           <>

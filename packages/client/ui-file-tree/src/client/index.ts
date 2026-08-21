@@ -99,18 +99,21 @@ export function apply(ctx: ClientContext): void {
       store: fileTreeStore,
       inject: injected,
     }, FileTree))
-    const offDock = ctx.slots.inject('shell.dock', () => ctx.slots.register({
-      name: 'shell.dock',
+    const offDetails = ctx.slots.inject('details', () => ctx.slots.register({
+      name: 'details',
       locale: NS,
       store: fileTreeStore,
       inject: (): MarkPanelInjected => ({
         readFile: path => ctx.workspaces.readFile(path),
-        // The mode contract keeps the widths owned by the layout package.
         setDockMode: (mode) => {
-          (ctx as unknown as { layout?: { setDockMode?: (mode: string) => void } }).layout?.setDockMode?.(mode)
+          if (mode === 'expanded' || mode === 'rail') {
+            ctx.layout?.openDetails()
+          } else if (mode === 'closed') {
+            ctx.layout?.closeDetails()
+          }
         },
       }),
     }, MarkPanel))
-    return () => { offChange(); offTree(); offDock() }
+    return () => { offChange(); offTree(); offDock(); offDetails() }
   }, 'ui-file-tree: registration')
 }
