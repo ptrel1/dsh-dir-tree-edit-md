@@ -21,7 +21,7 @@ import type { PropsLocale, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only, from the client face: imports the layout SlotMap + Context.layout
 // merges (bare-path host entry exposes neither) and the DockMode contract.
 export type DockMode = 'closed' | 'rail' | 'expanded'
-import type { createFileTreeStore } from './store.ts'
+import type { createMarkPanelStore } from './store.ts'
 import { basename, selectionRange } from './marks.ts'
 import { openEditor, type ReadFile } from './editor.ts'
 import type { FileTreeKey } from './locales.ts'
@@ -37,7 +37,7 @@ export interface MarkPanelInjected {
 
 /** The panel's store + locale face, plus the wire and dock drivers. */
 export type MarkPanelProps =
-  PropsStore<ReturnType<typeof createFileTreeStore>>
+  PropsStore<ReturnType<typeof createMarkPanelStore>>
   & PropsLocale<'filetree'>
   & MarkPanelInjected
 

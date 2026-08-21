@@ -39,7 +39,7 @@ export type FileEditorState = {
 }
 
 /** File-tree browsing state (process-local; nothing here is durable). */
-type FileTreeState = {
+export type FileTreeState = {
   /** Loaded listing by directory path. */
   children: Record<string, FileTreeListing>
   /** Expanded directory paths (re-listed when the host reports a change). */
@@ -52,16 +52,14 @@ type FileTreeState = {
   search: FileTreeSearchState | null
   /** Edit markers by absolute file path (the right-side tags + editor highlights). */
   annotations: Record<string, FileAnnotation[]>
-  /** Paths opened through the edit-marker action, in open order. A file stays
-   * on the dock's tag rail after its editor closes — the rail derives from
-   * this list, not from `annotations`, so merely opening a file leaves a tag. */
+  /** Paths opened through the edit-marker action, in open order. */
   marked: string[]
   /** The open editor surface; null when no file is being marked. */
   editor: FileEditorState | null
 }
 
-/** Store write set, derived from the actions literal for drift-free typing. */
-type FileTreeActions = {
+/** Store write set for the file-tree browsing surface. */
+export type FileTreeActions = {
   setChildren: (d: FileTreeState, path: string, listing: FileTreeListing) => void
   setExpanded: (d: FileTreeState, path: string, expanded: boolean) => void
   toggleSelection: (d: FileTreeState, path: string) => void
@@ -81,6 +79,29 @@ type FileTreeActions = {
   closeMarked: (d: FileTreeState, path: string) => void
   clearMarked: (d: FileTreeState) => void
   setEditor: (d: FileTreeState, editor: FileEditorState | null) => void
+}
+
+/** Edit-marker panel state (session-scoped; lives in details slot). */
+export type MarkPanelState = {
+  /** Edit markers by absolute file path (the right-side tags + editor highlights). */
+  annotations: Record<string, FileAnnotation[]>
+  /** Paths opened through the edit-marker action, in open order. */
+  marked: string[]
+  /** The open editor surface; null when no file is being marked. */
+  editor: FileEditorState | null
+}
+
+/** Store write set for the edit-marker dock panel. */
+export type MarkPanelActions = {
+  setAnnotations: (d: MarkPanelState, annotations: FileAnnotation[]) => void
+  mergeAnnotationStatuses: (d: MarkPanelState, annotations: FileAnnotation[]) => void
+  addAnnotation: (d: MarkPanelState, path: string, annotation: FileAnnotation) => void
+  removeAnnotation: (d: MarkPanelState, path: string, id: string) => void
+  clearAnnotations: (d: MarkPanelState) => void
+  markOpened: (d: MarkPanelState, path: string) => void
+  closeMarked: (d: MarkPanelState, path: string) => void
+  clearMarked: (d: MarkPanelState) => void
+  setEditor: (d: MarkPanelState, editor: FileEditorState | null) => void
 }
 
 /** Rebuild the per-path annotation map from a flat list (host order preserved). */
@@ -104,7 +125,7 @@ export function flatAnnotations(annotations: Record<string, FileAnnotation[]>): 
 }
 
 /**
- * Create the file-tree browsing store handle.
+ * Create the file-tree browsing store handle (root-scoped).
  * @returns the store handle (spec + type + identity + factory in one).
  */
 export function createFileTreeStore(): EngineStoreHandle<FileTreeState, FileTreeActions> {
@@ -131,12 +152,7 @@ export function createFileTreeStore(): EngineStoreHandle<FileTreeState, FileTree
       clearSelection: (d) => { d.selection = [] },
       clearFailed: (d) => { d.failed = {} },
       clearSearch: (d) => { d.search = null },
-      // Replaces the whole marker set from the host's authoritative list (used
-      // on initial sync and on re-read after a `filetree/change`, so completion
-      // statuses the host derived flow back into the tags).
       setAnnotations: (d, annotations) => { d.annotations = annotationsByPath(annotations) },
-      // Adopt completion statuses the host derived (matching by id), without
-      // removing markers the host has not yet received from the client.
       mergeAnnotationStatuses: (d, annotations) => {
         const statusById = new Map(annotations.map(a => [a.id, a.status]))
         for (const path of Object.keys(d.annotations)) {
@@ -157,14 +173,59 @@ export function createFileTreeStore(): EngineStoreHandle<FileTreeState, FileTree
         d.annotations[path] = list === undefined ? [] : list.filter(a => a.id !== id)
       },
       clearAnnotations: (d) => { d.annotations = {} },
-      // Idempotent: a file already on the rail stays once (open order preserved).
       markOpened: (d, path) => {
         if (d.marked.includes(path)) return
         d.marked = [...d.marked, path]
       },
-      // The tag's ✕: drop the file from the rail AND clear every marker it
-      // carries (the tag is the file's closure affordance), closing the editor
-      // if it was showing this file.
+      closeMarked: (d, path) => {
+        d.marked = d.marked.filter(p => p !== path)
+        if (d.annotations[path] !== undefined) {
+          const { [path]: _removed, ...rest } = d.annotations
+          d.annotations = rest
+        }
+        if (d.editor?.path === path) d.editor = null
+      },
+      clearMarked: (d) => { d.marked = [] },
+      setEditor: (d, editor) => { d.editor = editor },
+    },
+  })
+}
+
+/**
+ * Create the edit-marker dock panel store handle (session-scoped).
+ * @returns the store handle for MarkPanel.
+ */
+export function createMarkPanelStore(): EngineStoreHandle<MarkPanelState, MarkPanelActions> {
+  return defineStore({
+    init: (): MarkPanelState => ({
+      annotations: {}, marked: [], editor: null,
+    }),
+    actions: {
+      setAnnotations: (d, annotations) => { d.annotations = annotationsByPath(annotations) },
+      mergeAnnotationStatuses: (d, annotations) => {
+        const statusById = new Map(annotations.map(a => [a.id, a.status]))
+        for (const path of Object.keys(d.annotations)) {
+          const list = d.annotations[path]
+          if (list === undefined) continue
+          d.annotations[path] = list.map((a) => {
+            const status = statusById.get(a.id)
+            return status === undefined ? a : { ...a, status }
+          })
+        }
+      },
+      addAnnotation: (d, path, annotation) => {
+        const list = d.annotations[path]
+        d.annotations[path] = list === undefined ? [annotation] : [...list, annotation]
+      },
+      removeAnnotation: (d, path, id) => {
+        const list = d.annotations[path]
+        d.annotations[path] = list === undefined ? [] : list.filter(a => a.id !== id)
+      },
+      clearAnnotations: (d) => { d.annotations = {} },
+      markOpened: (d, path) => {
+        if (d.marked.includes(path)) return
+        d.marked = [...d.marked, path]
+      },
       closeMarked: (d, path) => {
         d.marked = d.marked.filter(p => p !== path)
         if (d.annotations[path] !== undefined) {

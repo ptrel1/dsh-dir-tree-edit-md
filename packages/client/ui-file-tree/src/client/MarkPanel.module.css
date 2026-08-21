@@ -4,30 +4,50 @@
    editor (tag strip + highlighted body + annotation box). Semantic state
    tokens only (no literal colors). */
 
-/* Expanded shape: a static flex column filling the dock track. No portal,
-   no fixed positioning — opening the panel pushes the center column. */
+/* Overlay drawer shape: slides in smoothly from the right, taking 50% width
+   (min 420px, max 840px), elevated with soft shadow and acrylic border. */
 .panel {
-  position: relative;
-  height: 100%;
-  min-width: 0;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(55vw, 840px);
+  min-width: 380px;
+  height: 100vh;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 10px 12px;
+  padding: 14px 16px;
   box-sizing: border-box;
   background: var(--dsw-alias-bg-layer-2);
-  /* Elevated surface (l2 rung): the scrollbar thumb takes the l2 elevation
-     tokens, inherited down to the scrolling .tagRail / .lines / .markerList
-     (see ui-theme styles/scrollbar.css for the rebinding contract). */
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  animation: drawerSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+@keyframes drawerSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 /* Collapsed shape: one vertical filename chip per opened file. The rail is
    itself the column's full height; the chips stack top to bottom. */
 .rail {
-  height: 100%;
-  min-width: 0;
+  position: fixed;
+  top: 50px;
+  right: 12px;
+  max-height: 80vh;
+  z-index: 9998;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -35,8 +55,10 @@
   box-sizing: border-box;
   overflow-y: auto;
   background: var(--dsw-alias-bg-layer-2);
-  /* Elevated surface (l2 rung) that scrolls itself: rebind the thumb pair
-     directly (see ui-theme styles/scrollbar.css for the rebinding contract). */
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  pointer-events: auto;
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }

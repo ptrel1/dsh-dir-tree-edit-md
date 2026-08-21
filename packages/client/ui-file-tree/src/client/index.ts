@@ -12,7 +12,7 @@ import type { FileTreeInjected, FileTreeHookSources } from './FileTree.tsx'
 import { FileTree } from './FileTree.tsx'
 import type { MarkPanelInjected } from './MarkPanel.tsx'
 import { MarkPanel } from './MarkPanel.tsx'
-import { createFileTreeStore } from './store.ts'
+import { createFileTreeStore, createMarkPanelStore } from './store.ts'
 import { en, zh, type FileTreeKey } from './locales.ts'
 
 /** Locale namespace owning the tree's copy. */
@@ -84,9 +84,6 @@ export function apply(ctx: ClientContext): void {
     hooks: { fileTreeChange: changeSignal },
   })
 
-  // One handle shared by the tree and the dock: both entries resolve to the
-  // same store instance, so a mark opened from the tree shows in the panel and
-  // a tag click lands back in the tree's state without cross-slot plumbing.
   const fileTreeStore = createFileTreeStore()
 
   ctx.effect(() => {
@@ -99,21 +96,17 @@ export function apply(ctx: ClientContext): void {
       store: fileTreeStore,
       inject: injected,
     }, FileTree))
-    const offDetails = ctx.slots.inject('details', () => ctx.slots.register({
-      name: 'details',
+    const offOverlay = ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'file-preview-drawer',
+      order: 500,
       locale: NS,
       store: fileTreeStore,
       inject: (): MarkPanelInjected => ({
         readFile: path => ctx.workspaces.readFile(path),
-        setDockMode: (mode) => {
-          if (mode === 'expanded' || mode === 'rail') {
-            ctx.layout?.openDetails()
-          } else if (mode === 'closed') {
-            ctx.layout?.closeDetails()
-          }
-        },
+        setDockMode: () => {},
       }),
     }, MarkPanel))
-    return () => { offChange(); offTree(); offDock(); offDetails() }
+    return () => { offChange(); offTree(); offOverlay() }
   }, 'ui-file-tree: registration')
 }
