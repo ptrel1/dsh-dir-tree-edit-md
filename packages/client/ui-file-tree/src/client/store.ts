@@ -94,7 +94,11 @@ function annotationsByPath(annotations: FileAnnotation[]): Record<string, FileAn
   return byPath
 }
 
-/** The complete flat marker list in path-major order (the wire shape). */
+/**
+ * The complete flat marker list in path-major order (the wire shape).
+ * @param annotations - annotations grouped by file path.
+ * @returns every annotation flattened, one entry per marker.
+ */
 export function flatAnnotations(annotations: Record<string, FileAnnotation[]>): FileAnnotation[] {
   return Object.values(annotations).flat()
 }

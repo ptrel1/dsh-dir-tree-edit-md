@@ -37,6 +37,22 @@ export const inject = ['slots', 'workspaces', 'locale', 'remote', 'layout']
  * tree into the shell's `sidebar.filetree` hole.
  * @param ctx - client root context.
  */
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    /**
+     * The rightmost dock column seat, registered by this package's MarkPanel:
+     * the edit-marker occupant that renders a collapsed vertical tag rail (one
+     * filename chip per opened file) or an expanded editor with highlighted
+     * marked lines once a file is open. The occupant drives the column's width
+     * through the layout `setDockMode` inject; the layout frame owns the
+     * track's geometry and border. Absence collapses the column to nothing —
+     * no occupant, no width (broken-composition state; the shipped composition
+     * always registers the seat).
+     */
+    'shell.dock': { kind: 'single'; scope: 'root'; owner: Record<string, never> }
+  }
+}
+
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-file-tree: dictionaries')
 
@@ -90,7 +106,9 @@ export function apply(ctx: ClientContext): void {
       inject: (): MarkPanelInjected => ({
         readFile: path => ctx.workspaces.readFile(path),
         // The mode contract keeps the widths owned by the layout package.
-        setDockMode: (mode) => { ctx.layout.setDockMode(mode) },
+        setDockMode: (mode) => {
+          (ctx as unknown as { layout?: { setDockMode?: (mode: string) => void } }).layout?.setDockMode?.(mode)
+        },
       }),
     }, MarkPanel))
     return () => { offChange(); offTree(); offDock() }

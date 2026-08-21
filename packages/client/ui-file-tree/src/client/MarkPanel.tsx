@@ -13,13 +13,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import clsx from 'clsx'
 import {
   grammarLoadCount, highlightLines, subscribeGrammarLoaded, IconCloseFill14, IconLoadingOutline16,
+  MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HighlightSpan } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { FileAnnotation, FileAnnotationStatus } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsLocale, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only, from the client face: imports the layout SlotMap + Context.layout
 // merges (bare-path host entry exposes neither) and the DockMode contract.
-import type { DockMode } from '@deepseek-ai/dsh-client-ui-layout/client'
+export type DockMode = 'closed' | 'rail' | 'expanded'
 import type { createFileTreeStore } from './store.ts'
 import { basename, selectionRange } from './marks.ts'
 import { openEditor, type ReadFile } from './editor.ts'
@@ -145,8 +146,8 @@ function EditorLine({ lineText, lineIndex, runs, markers, highlightId }: {
   )
 }
 
-/** The open-file editor body: highlighted source with selectable text. */
-function Editor({ text, truncated, language, failed, loading, annotations, onMark, onDelete, t }: {
+/** The open-file editor body: highlighted source with selectable text or markdown preview. */
+function Editor({ text, truncated, language, failed, loading, annotations, onMark, onDelete, t, viewMode }: {
   text: string
   truncated: boolean
   language: string | undefined
@@ -156,6 +157,7 @@ function Editor({ text, truncated, language, failed, loading, annotations, onMar
   onMark: (range: ReturnType<typeof selectionRange>) => void
   onDelete: (id: string) => void
   t: (key: FileTreeKey) => string
+  viewMode: 'preview' | 'source' | 'split'
 }) {
   const lines = useMemo(() => text.split('\n'), [text])
   // Re-render when a lazy grammar finishes loading (same contract as CodeBlock).
@@ -177,58 +179,82 @@ function Editor({ text, truncated, language, failed, loading, annotations, onMar
     return <div className={css.editorError}>{t('editor.failed')}</div>
   }
 
-  return (
-    <div className={css.editorBody}>
-      {loading ? (
+  if (loading) {
+    return (
+      <div className={css.editorBody}>
         <div className={css.editorLoading} role="status" aria-label={t('editor.loading')}>
           <IconLoadingOutline16 className={css.loadingIcon} />
           <span>{t('editor.loading')}</span>
         </div>
-      ) : (
-        <>
-          <div ref={bodyRef} className={css.lines} onMouseUp={() => {
-            if (bodyRef.current === null) return
-            onMark(selectionRange(bodyRef.current, lines))
-          }}>
-            {lines.map((lineText, index) => (
-              <EditorLine
-                key={index}
-                lineText={lineText}
-                lineIndex={index}
-                runs={highlighted?.[index]}
-                markers={markersOnLine(annotations, index, lineText.length)}
-                highlightId={highlightId}
-              />
-            ))}
-          </div>
-          {truncated && <div className={css.truncated}>{t('editor.truncated')}</div>}
-          {annotations.length > 0 && (
-            <div className={css.markerList}>
-              {annotations.map(annotation => (
-                <div
-                  key={annotation.id}
-                  className={clsx(css.markerItem, annotation.id === highlightId && css.markerItemActive)}
-                  data-active={annotation.id === highlightId || undefined}
-                  onClick={() => { focusMarker(annotation.id, annotation.startLine) }}
-                >
-                  <span className={clsx(css.markerDot, annotation.status === 'done' ? css.markerDone : css.markerPending)} />
-                  <span className={css.markerItemText}>
-                    {annotation.startLine === annotation.endLine ? `L${annotation.startLine}` : `L${annotation.startLine}-${annotation.endLine}`}
-                    {' '}{annotation.instruction}
-                  </span>
-                  <button
-                    type="button"
-                    className={css.deleteButton}
-                    aria-label={t('action.deleteMarker')}
-                    onClick={(e) => { e.stopPropagation(); onDelete(annotation.id) }}
-                  >
-                    <IconCloseFill14 />
-                  </button>
-                </div>
-              ))}
+      </div>
+    )
+  }
+
+  const renderSourceLines = () => (
+    <>
+      <div ref={bodyRef} className={css.lines} onMouseUp={() => {
+        if (bodyRef.current === null) return
+        onMark(selectionRange(bodyRef.current, lines))
+      }}>
+        {lines.map((lineText, index) => (
+          <EditorLine
+            key={index}
+            lineText={lineText}
+            lineIndex={index}
+            runs={highlighted?.[index]}
+            markers={markersOnLine(annotations, index, lineText.length)}
+            highlightId={highlightId}
+          />
+        ))}
+      </div>
+      {truncated && <div className={css.truncated}>{t('editor.truncated')}</div>}
+      {annotations.length > 0 && (
+        <div className={css.markerList}>
+          {annotations.map(annotation => (
+            <div
+              key={annotation.id}
+              className={clsx(css.markerItem, annotation.id === highlightId && css.markerItemActive)}
+              data-active={annotation.id === highlightId || undefined}
+              onClick={() => { focusMarker(annotation.id, annotation.startLine) }}
+            >
+              <span className={clsx(css.markerDot, annotation.status === 'done' ? css.markerDone : css.markerPending)} />
+              <span className={css.markerItemText}>
+                {annotation.startLine === annotation.endLine ? `L${annotation.startLine}` : `L${annotation.startLine}-${annotation.endLine}`}
+                {' '}{annotation.instruction}
+              </span>
+              <button
+                type="button"
+                className={css.deleteButton}
+                aria-label={t('action.deleteMarker')}
+                onClick={(e) => { e.stopPropagation(); onDelete(annotation.id) }}
+              >
+                <IconCloseFill14 />
+              </button>
             </div>
-          )}
-        </>
+          ))}
+        </div>
+      )}
+    </>
+  )
+
+  const renderMarkdownPreview = () => (
+    <div className={css.markdownPreview}>
+      <MarkdownText text={text} />
+      {truncated && <div className={css.truncated}>{t('editor.truncated')}</div>}
+    </div>
+  )
+
+  return (
+    <div className={css.editorBody}>
+      {viewMode === 'preview' ? (
+        renderMarkdownPreview()
+      ) : viewMode === 'split' ? (
+        <div className={css.splitContainer}>
+          <div className={css.splitEditor}>{renderSourceLines()}</div>
+          <div className={css.splitPreview}><MarkdownText text={text} /></div>
+        </div>
+      ) : (
+        renderSourceLines()
       )}
     </div>
   )
@@ -332,6 +358,16 @@ export function MarkPanel({ useStore, actions, readFile, setDockMode, t }: MarkP
     )
   }
 
+  // View mode state for markdown/text files. Markdown defaults to preview, others to source.
+  const isMd = editor?.path.endsWith('.md') || editor?.path.endsWith('.markdown') || editor?.language === 'markdown'
+  const [viewMode, setViewMode] = useState<'preview' | 'source' | 'split'>('source')
+
+  useEffect(() => {
+    if (editor === null) return
+    const md = editor.path.endsWith('.md') || editor.path.endsWith('.markdown') || editor.language === 'markdown'
+    setViewMode(md ? 'preview' : 'source')
+  }, [editor?.path, editor?.language])
+
   // Expanded: tag strip (clicking switches the editor) + the editor body.
   return (
     <div className={css.panel} role="complementary" aria-label={t('panel.label')}>
@@ -368,6 +404,31 @@ export function MarkPanel({ useStore, actions, readFile, setDockMode, t }: MarkP
       <div className={css.editor}>
         <div className={css.editorHeader}>
           <span className={css.editorTitle}>{basename(editor.path)}</span>
+          {isMd && (
+            <div className={css.modeSwitch} role="group" aria-label="View mode">
+              <button
+                type="button"
+                className={clsx(css.modeButton, viewMode === 'preview' && css.modeButtonActive)}
+                onClick={() => { setViewMode('preview') }}
+              >
+                {t('editor.viewMode.preview')}
+              </button>
+              <button
+                type="button"
+                className={clsx(css.modeButton, viewMode === 'source' && css.modeButtonActive)}
+                onClick={() => { setViewMode('source') }}
+              >
+                {t('editor.viewMode.source')}
+              </button>
+              <button
+                type="button"
+                className={clsx(css.modeButton, viewMode === 'split' && css.modeButtonActive)}
+                onClick={() => { setViewMode('split') }}
+              >
+                {t('editor.viewMode.split')}
+              </button>
+            </div>
+          )}
           <button type="button" className={css.closeButton} aria-label={t('action.closeEditor')} onClick={() => { actions.setEditor(null) }}>
             <IconCloseFill14 />
           </button>
@@ -391,6 +452,7 @@ export function MarkPanel({ useStore, actions, readFile, setDockMode, t }: MarkP
           }}
           onDelete={(id) => { actions.removeAnnotation(editor.path, id) }}
           t={t}
+          viewMode={isMd ? viewMode : 'source'}
         />
       </div>
       {pending !== null && (

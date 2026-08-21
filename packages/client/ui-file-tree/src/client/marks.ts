@@ -40,7 +40,11 @@ export function isTextFile(name: string): boolean {
   return TEXT_EXTENSIONS.has(stem.slice(dot + 1))
 }
 
-/** The trailing path segment (both separator conventions). */
+/**
+ * The trailing path segment (both separator conventions).
+ * @param path - the file path to split.
+ * @returns the trailing path segment, or the whole input when it has no separator.
+ */
 export function basename(path: string): string {
   return path.split(/[\\/]/).pop() ?? path
 }
