@@ -328,6 +328,7 @@ export function MarkPanel({ useStore, actions, readFile, setDockMode, t }: MarkP
   // (aria 关闭文件) sits inside the tag corner and clears every marker the file
   // carries — stopPropagation keeps it from also reopening the file.
   if (editor === null) {
+    if (marked.length === 0) return null
     return (
       <div className={css.rail} role="complementary" aria-label={t('panel.label')}>
         {marked.map((path) => {
